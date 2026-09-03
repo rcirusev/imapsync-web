@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>imapsync — Web UI</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="page">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">⇄</span>
+      <div>
+        <h1>imapsync <span class="brand-sub">Web UI</span></h1>
+        <p class="tagline">Migrate one IMAP mailbox into another, folder by folder.</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button id="theme-toggle" class="btn btn-ghost" type="button" aria-label="Toggle dark mode">🌙</button>
+    </div>
+  </header>
+
+  <div id="binary-banner" class="banner banner-warning" hidden>
+    <strong>imapsync was not found on this server.</strong>
+    Run <code>install.sh</code> (or set the <code>IMAPSYNC_BIN</code> environment variable) and restart the service.
+    Migrations can't start until it's installed.
+  </div>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="new">New migration</button>
+    <button class="tab" data-tab="bulk">Bulk (CSV)</button>
+    <button class="tab" data-tab="history">History</button>
+  </nav>
+
+  <main class="layout" id="tab-new">
+
+    <section class="card form-card">
+      <form id="sync-form">
+        <div class="accounts-grid">
+
+          <fieldset class="account">
+            <legend>Source account <span class="legend-tag">host1</span></legend>
+
+            <label class="field">
+              <span>Host</span>
+              <input type="text" name="host1" placeholder="imap.oldprovider.com" required>
+            </label>
+
+            <div class="field-row">
+              <label class="field field-small">
+                <span>Port</span>
+                <input type="number" name="port1" placeholder="993">
+              </label>
+              <label class="field field-checkbox">
+                <input type="checkbox" name="ssl1" checked>
+                <span>SSL / TLS</span>
+              </label>
+            </div>
+
+            <label class="field">
+              <span>Username</span>
+              <input type="text" name="user1" placeholder="user@oldprovider.com" required>
+            </label>
+
+            <label class="field-checkbox master-account-toggle">
+              <input type="checkbox" id="master-account-1" name="use_authuser1">
+              <span>Use a master/admin account (don't ask this user for their password)</span>
+            </label>
+
+            <label class="field" id="authuser1-row" hidden>
+              <span>Admin username</span>
+              <input type="text" name="authuser1" placeholder="admin@oldprovider.com" autocomplete="off">
+            </label>
+
+            <label class="field">
+              <span id="password1-label">Password</span>
+              <input type="password" name="password1" placeholder="••••••••" autocomplete="off">
+              <span class="field-hint" id="password1-hint">Sent once to start the migration, never stored or logged.</span>
+            </label>
+
+            <div class="conn-test-row">
+              <span id="conn-test-status-1" class="conn-test-status" hidden></span>
+            </div>
+          </fieldset>
+
+          <fieldset class="account">
+            <legend>Destination account <span class="legend-tag">host2</span></legend>
+
+            <label class="field">
+              <span>Host</span>
+              <input type="text" name="host2" placeholder="imap.newprovider.com" required>
+            </label>
+
+            <div class="field-row">
+              <label class="field field-small">
+                <span>Port</span>
+                <input type="number" name="port2" placeholder="993">
+              </label>
+              <label class="field field-checkbox">
+                <input type="checkbox" name="ssl2" checked>
+                <span>SSL / TLS</span>
+              </label>
+            </div>
+
+            <label class="field">
+              <span>Username</span>
+              <input type="text" name="user2" placeholder="user@newprovider.com" required>
+            </label>
+
+            <label class="field-checkbox master-account-toggle">
+              <input type="checkbox" id="master-account-2" name="use_authuser2">
+              <span>Use a master/admin account (don't ask this user for their password)</span>
+            </label>
+
+            <label class="field" id="authuser2-row" hidden>
+              <span>Admin username</span>
+              <input type="text" name="authuser2" placeholder="admin@newprovider.com" autocomplete="off">
+            </label>
+
+            <label class="field">
+              <span id="password2-label">Password</span>
+              <input type="password" name="password2" placeholder="••••••••" autocomplete="off">
+              <span class="field-hint" id="password2-hint">Sent once to start the migration, never stored or logged.</span>
+            </label>
+
+            <div class="conn-test-row">
+              <span id="conn-test-status-2" class="conn-test-status" hidden></span>
+            </div>
+          </fieldset>
+
+        </div>
+
+        <div class="form-actions form-actions-secondary">
+          <button type="button" class="btn btn-ghost" id="test-connection-btn">Test connection</button>
+          <span class="field-hint">Just checks login on both accounts — doesn't touch any mail.</span>
+        </div>
+
+        <fieldset class="options">
+          <legend>Options</legend>
+          <div class="options-grid">
+            <label class="field-checkbox">
+              <input type="checkbox" name="dry">
+              <span>Dry run <code>--dry</code></span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" name="syncflags" checked>
+              <span>Sync flags &amp; dates <code>--syncflags</code></span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" name="delete2duplicates">
+              <span>Delete duplicates on destination</span>
+            </label>
+            <label class="field-checkbox">
+              <input type="checkbox" name="subscribeall" checked>
+              <span>Subscribe all folders</span>
+            </label>
+          </div>
+          <label class="field">
+            <span>Exclude folders <span class="field-hint-inline">(comma separated)</span></span>
+            <input type="text" name="exclude" placeholder="Spam, Trash">
+          </label>
+        </fieldset>
+
+        <fieldset class="options">
+          <legend>Delta sync</legend>
+          <label class="field-checkbox">
+            <input type="checkbox" id="schedule-enabled" name="schedule_enabled">
+            <span>Automatically re-run this migration to catch new mail, until I stop it</span>
+          </label>
+          <div id="schedule-interval-row" class="field-row" hidden>
+            <label class="field field-small">
+              <span>Every (hours)</span>
+              <input type="number" id="schedule-interval" min="0.25" step="0.25" value="6">
+            </label>
+          </div>
+          <p class="field-hint">
+            Stores this migration's passwords, encrypted, so it can log back
+            in on its own — the one case in this app where passwords aren't
+            single-use. Manage or turn off any time from History → Scheduled
+            delta syncs.
+          </p>
+        </fieldset>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="start-btn">Start migration</button>
+          <span id="status-badge" class="status-badge status-idle">Idle</span>
+        </div>
+      </form>
+    </section>
+
+    <section class="card console-card">
+      <div class="console-header">
+        <h2>Migration console</h2>
+        <div id="progress-indeterminate" class="progress-indeterminate" hidden></div>
+      </div>
+      <pre id="console" class="console" aria-live="polite">Fill in both accounts and click “Start migration” to run a real imapsync job.</pre>
+    </section>
+
+    <section id="stats-section" class="stats-row" hidden>
+      <div class="stat-tile">
+        <span class="stat-label">Folders (best effort)</span>
+        <span id="stat-folders" class="stat-value">–</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-label">Messages (best effort)</span>
+        <span id="stat-messages" class="stat-value">–</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-label">Errors</span>
+        <span id="stat-errors" class="stat-value">–</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-label">Duration</span>
+        <span id="stat-duration" class="stat-value">–</span>
+      </div>
+    </section>
+
+  </main>
+
+  <main class="layout" id="tab-bulk" hidden>
+
+    <section class="card">
+      <h2 class="section-title">Bulk migration from a CSV file</h2>
+      <p class="hint-text">
+        Each row is a fully independent migration (its own source/destination
+        accounts and options) — handy for migrating many mailboxes onto a new
+        server at once. Rows run <strong>one at a time</strong>, in file
+        order, so the source/destination servers aren't hit with many
+        connections simultaneously.
+      </p>
+      <p class="hint-text">
+        <a id="download-template" href="/api/bulk/template">Download the CSV template</a>
+        to see the exact columns expected (required: <code>host1, user1,
+        password1, host2, user2, password2</code> — everything else is
+        optional per row).
+      </p>
+      <label class="field">
+        <span>Batch name <span class="field-hint-inline">(optional — shown in History, like a named migration batch)</span></span>
+        <input type="text" id="bulk-batch-name" placeholder="e.g. Finance dept — March 2026">
+      </label>
+      <label class="field-checkbox">
+        <input type="checkbox" id="bulk-schedule-enabled">
+        <span>Automatically re-run this whole batch to catch new mail, until I stop it</span>
+      </label>
+      <div id="bulk-schedule-interval-row" class="field-row" hidden>
+        <label class="field field-small">
+          <span>Every (hours)</span>
+          <input type="number" id="bulk-schedule-interval" min="0.25" step="0.25" value="6">
+        </label>
+      </div>
+      <p class="field-hint" id="bulk-schedule-hint" hidden>
+        Stores every row's passwords, encrypted, so the batch can log back in
+        on its own — the one case in this app where passwords aren't
+        single-use. Manage or turn off any time from History → Scheduled
+        delta syncs.
+      </p>
+      <div class="bulk-upload-row">
+        <input type="file" id="bulk-file" accept=".csv,text/csv">
+        <button type="button" id="bulk-start-btn" class="btn btn-primary">Start bulk migration</button>
+      </div>
+      <p class="field-hint">
+        The file is parsed in memory and never saved to disk. Passwords are
+        held only for as long as each row's own migration is running, exactly
+        like a single migration.
+      </p>
+      <div id="bulk-row-errors" class="banner banner-warning" hidden></div>
+    </section>
+
+    <section class="card console-card" id="bulk-progress-card" hidden>
+      <div class="console-header">
+        <h2 id="bulk-progress-label">Migration console</h2>
+        <div class="console-header-actions">
+          <button type="button" id="bulk-stop-btn" class="btn btn-ghost btn-small">Stop batch</button>
+          <div id="bulk-progress-indeterminate" class="progress-indeterminate" hidden></div>
+        </div>
+      </div>
+      <pre id="bulk-console" class="console"></pre>
+    </section>
+
+    <section class="card" id="bulk-results-card" hidden>
+      <div class="history-header">
+        <h2>Bulk run results</h2>
+        <span id="bulk-summary" class="status-badge status-idle"></span>
+      </div>
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Source</th>
+            <th>Destination</th>
+            <th>Status</th>
+            <th>Msgs</th>
+            <th>Errors</th>
+            <th>Duration</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="bulk-results-body"></tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <main class="layout" id="tab-history" hidden>
+    <section class="card">
+      <div class="history-header">
+        <h2>Scheduled delta syncs</h2>
+        <button id="refresh-schedules" class="btn btn-ghost" type="button">Refresh</button>
+      </div>
+      <p class="hint-text">
+        Migrations and batches set to automatically re-run and catch new
+        mail. Re-running only ever copies the delta — imapsync skips
+        whatever's already on the destination.
+      </p>
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>Accounts / batch</th>
+            <th>Every</th>
+            <th>Last run</th>
+            <th>Next run</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="schedules-body">
+          <tr><td colspan="5" class="history-empty">No scheduled delta syncs yet.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <div class="history-header">
+        <h2>Bulk batches</h2>
+        <button id="refresh-batches" class="btn btn-ghost" type="button">Refresh</button>
+      </div>
+      <p class="hint-text">
+        Progress for every CSV bulk run — updates on its own while a batch
+        is running, and stays here afterwards so you can check how far a
+        large batch got even after closing the tab or losing connection.
+      </p>
+      <div class="history-filter-row">
+        <input type="search" id="batches-search" class="filter-input" placeholder="Search by batch name…">
+        <select id="batches-status-filter" class="filter-select">
+          <option value="all">All statuses</option>
+          <option value="running">Running</option>
+          <option value="done">Done</option>
+          <option value="interrupted">Interrupted</option>
+          <option value="stopped">Stopped</option>
+        </select>
+      </div>
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>Started</th>
+            <th>Batch</th>
+            <th>Progress</th>
+            <th>Success</th>
+            <th>Errors</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="batches-body">
+          <tr><td colspan="7" class="history-empty">No bulk migrations yet.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <div class="history-header">
+        <h2>Migration history</h2>
+        <div class="history-header-actions">
+          <button id="clear-history" class="btn btn-ghost" type="button">Clear history</button>
+          <button id="refresh-history" class="btn btn-ghost" type="button">Refresh</button>
+        </div>
+      </div>
+      <p class="hint-text">
+        "Clear history" removes finished single migrations and bulk batches
+        (and their logs) from the lists below and on the Bulk batches card
+        above. Anything still running, and any job/batch an active delta
+        sync still needs, is kept automatically.
+      </p>
+      <div class="history-filter-row">
+        <input type="search" id="history-search" class="filter-input" placeholder="Search by user or host…">
+        <select id="history-status-filter" class="filter-select">
+          <option value="all">All statuses</option>
+          <option value="running">Running</option>
+          <option value="success">Completed</option>
+          <option value="error">Failed</option>
+          <option value="interrupted">Interrupted</option>
+        </select>
+      </div>
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>Started</th>
+            <th>Source</th>
+            <th>Destination</th>
+            <th>Status</th>
+            <th>Msgs</th>
+            <th>Errors</th>
+            <th>Duration</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="history-body">
+          <tr><td colspan="8" class="history-empty">No migrations yet.</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <div id="log-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h3>Migration log</h3>
+        <button class="btn btn-ghost" data-close type="button">✕</button>
+      </div>
+      <pre id="modal-log" class="console"></pre>
+    </div>
+  </div>
+
+  <div id="batch-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide">
+      <div class="modal-header">
+        <h3 id="batch-modal-title">Batch rows</h3>
+        <button class="btn btn-ghost" data-close type="button">✕</button>
+      </div>
+      <div class="modal-table-wrap">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Destination</th>
+              <th>Status</th>
+              <th>Msgs</th>
+              <th>Errors</th>
+              <th>Duration</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="batch-modal-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <footer class="page-footer">
+    Front-end for <a href="https://github.com/imapsync/imapsync" target="_blank" rel="noopener">imapsync</a>.
+    Every run shown here calls the real <code>imapsync</code> binary installed on this server.
+  </footer>
+
+</div>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

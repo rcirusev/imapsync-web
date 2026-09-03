@@ -1,0 +1,10 @@
+# Runtime data: SQLite history, per-job logs, the delta-sync secret key.
+# Never commit this — secret.key + the DB together can decrypt every
+# stored scheduled-delta-sync credential.
+data/
+
+.venv/
+__pycache__/
+*.pyc
+.env
+.DS_Store

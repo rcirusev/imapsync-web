@@ -1,0 +1,25 @@
+# Quick start:
+#   cp .env.example .env   # then edit IMAPSYNC_WEB_USERNAME/PASSWORD
+#   docker compose up -d
+#   open http://localhost:8000
+#
+# All history/logs/the delta-sync key file persist in the named volume
+# `imapsync_data` across restarts and image upgrades (docker compose pull
+# && docker compose up -d). See README.md's "Docker" section for details
+# on HTTPS/reverse-proxy, since this serves plain HTTP on the mapped port.
+services:
+  imapsync-web:
+    build: .
+    # Or, once published: image: ghcr.io/<you>/imapsync-web:latest
+    container_name: imapsync-web
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - imapsync_data:/data
+    environment:
+      IMAPSYNC_WEB_USERNAME: "${IMAPSYNC_WEB_USERNAME:-}"
+      IMAPSYNC_WEB_PASSWORD: "${IMAPSYNC_WEB_PASSWORD:-}"
+
+volumes:
+  imapsync_data:
