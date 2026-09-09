@@ -9,9 +9,11 @@
 # on HTTPS/reverse-proxy, since this serves plain HTTP on the mapped port.
 services:
   imapsync-web:
-    build: .
-    # Or, once published by .github/workflows/docker-publish.yml:
-    #   image: ghcr.io/rcirusev/imapsync-web:latest   (comment out 'build: .' above)
+    image: ghcr.io/rcirusev/imapsync-web:latest
+    # Published automatically by .github/workflows/docker-publish.yml on every
+    # push to main. Upgrade with: docker compose pull && docker compose up -d
+    # Or build locally instead of pulling the published image:
+    #   build: .
     container_name: imapsync-web
     restart: unless-stopped
     ports:
