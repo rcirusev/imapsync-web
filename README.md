@@ -106,6 +106,16 @@ install builds from `Dockerfile`. Upgrade with
 `docker pull ghcr.io/rcirusev/imapsync-web:latest && docker compose up -d`
 (or the equivalent `docker run`, recreating the container).
 
+`.github/workflows/check-upstream.yml` runs daily and watches
+[imapsync/imapsync](https://github.com/imapsync/imapsync) for new commits on
+its default branch. When one lands, it records the new commit SHA in
+`IMAPSYNC_UPSTREAM_SHA.txt` and pushes that — which triggers
+`docker-publish.yml` to rebuild and republish the image (the Dockerfile
+always clones imapsync's current tip, so the rebuild picks up the update
+automatically). No manual step needed to stay current with upstream; run
+`docker compose pull && docker compose up -d` periodically to pick up
+whatever's been published.
+
 The same security notes as the systemd install apply here — see
 "Authentication" and "Security notes before you expose this to anyone but
 yourself" below. This still serves plain HTTP on the mapped port: put a

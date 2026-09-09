@@ -1,0 +1,60 @@
+# Watches https://github.com/imapsync/imapsync (the tool this app wraps) for
+# new commits on its default branch. Dockerfile always builds imapsync fresh
+# from that branch's tip, so nothing here needs to touch the Dockerfile —
+# this job's only purpose is to trigger a rebuild when upstream actually
+# changed, since otherwise nothing would ever re-run docker-publish.yml on a
+# day we haven't touched our own code.
+#
+# When a new upstream commit is found: IMAPSYNC_UPSTREAM_SHA.txt is updated
+# and committed (a small audit trail of "when did we pick up which upstream
+# commit"), and that push to main is what triggers docker-publish.yml to
+# rebuild + republish ghcr.io/rcirusev/imapsync-web:latest with the update.
+name: Check upstream imapsync for updates
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # daily, 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get latest imapsync/imapsync commit SHA
+        id: upstream
+        run: |
+          SHA=$(curl -fsSL -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/imapsync/imapsync/commits/master \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])")
+          echo "Latest upstream commit: $SHA"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Compare to last recorded SHA
+        id: compare
+        run: |
+          OLD=$(cat IMAPSYNC_UPSTREAM_SHA.txt 2>/dev/null || echo "")
+          NEW="${{ steps.upstream.outputs.sha }}"
+          echo "Recorded: $OLD"
+          echo "Latest:   $NEW"
+          if [ "$OLD" != "$NEW" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Record new SHA and trigger a rebuild
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          echo "${{ steps.upstream.outputs.sha }}" > IMAPSYNC_UPSTREAM_SHA.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add IMAPSYNC_UPSTREAM_SHA.txt
+          git commit -m "Bump upstream imapsync to ${{ steps.upstream.outputs.sha }}" \
+            -m "Triggers docker-publish.yml to rebuild with the latest imapsync/imapsync master."
+          git push
