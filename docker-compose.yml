@@ -10,7 +10,8 @@
 services:
   imapsync-web:
     build: .
-    # Or, once published: image: ghcr.io/<you>/imapsync-web:latest
+    # Or, once published by .github/workflows/docker-publish.yml:
+    #   image: ghcr.io/rcirusev/imapsync-web:latest   (comment out 'build: .' above)
     container_name: imapsync-web
     restart: unless-stopped
     ports:

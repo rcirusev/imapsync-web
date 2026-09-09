@@ -1,0 +1,60 @@
+# Builds the Docker image (see Dockerfile) and publishes it to GHCR
+# (GitHub Container Registry) on every push to main, plus on demand.
+#
+# Once published, anyone can run it directly without cloning/building:
+#   docker run -d --name imapsync-web -p 8000:8000 -v imapsync_data:/data \
+#     ghcr.io/rcirusev/imapsync-web:latest
+#
+# First run only: the package may default to private — make it public at
+# https://github.com/users/rcirusev/packages/container/imapsync-web/settings
+# (Danger Zone -> Change visibility) if you want anonymous `docker pull`.
+name: Build and publish Docker image
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata (tags/labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

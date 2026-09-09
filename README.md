@@ -88,6 +88,24 @@ docker run -d --name imapsync-web -p 8000:8000 \
   imapsync-web
 ```
 
+### Pre-built image (no clone/build needed)
+
+`.github/workflows/docker-publish.yml` builds this image and publishes it to
+GHCR (GitHub Container Registry) on every push to `main`. Once published,
+any machine with Docker can run it directly:
+
+```bash
+docker run -d --name imapsync-web -p 8000:8000 \
+  -v imapsync_data:/data \
+  -e IMAPSYNC_WEB_USERNAME=admin -e IMAPSYNC_WEB_PASSWORD='change-me' \
+  ghcr.io/rcirusev/imapsync-web:latest
+```
+
+No source checkout, no local build — this pulls the same image every
+install builds from `Dockerfile`. Upgrade with
+`docker pull ghcr.io/rcirusev/imapsync-web:latest && docker compose up -d`
+(or the equivalent `docker run`, recreating the container).
+
 The same security notes as the systemd install apply here — see
 "Authentication" and "Security notes before you expose this to anyone but
 yourself" below. This still serves plain HTTP on the mapped port: put a
