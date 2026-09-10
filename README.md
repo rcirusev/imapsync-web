@@ -303,13 +303,14 @@ it failed.
 If the whole server process is interrupted partway through a batch (a
 restart, a crash, a reboot), the batch is marked **Interrupted** on the next
 startup rather than showing "Running" forever, and it keeps the exact
-progress it had reached (e.g. "42/100"). Rows that had already completed by
-then are safe and already recorded. For whatever hadn't started yet, the
-simplest and safest thing is to just re-upload the same CSV again:
-`imapsync` is incremental, so already-migrated mailboxes finish almost
-instantly on the second pass (nothing left to copy) and it naturally
-picks up where it left off for the rest — no special "resume batch" upload
-needed.
+progress it had reached (e.g. "42/100"). Every row — including ones that
+hadn't gotten their turn to run yet — already has its host/port/SSL/
+username/options recorded in the database from the moment the batch
+started (passwords excluded, as always), so nothing is lost even for a row
+that never actually started `imapsync`: it's marked **Interrupted** too, on
+the next startup, right alongside rows that failed mid-run. Use **Download
+failed CSV** (see Batches below) to get every row that still needs a rerun
+— started or not — instead of re-uploading the entire original file.
 
 ### Batches, like Office 365 migration batches
 
@@ -328,13 +329,19 @@ same idea as an Exchange/Office 365 IMAP migration batch:
   row is currently in flight finishes — it does not kill a transfer
   mid-flight, it just stops picking up new rows. The batch is then marked
   **Stopped**, distinct from a crash-induced **Interrupted**.
-- **Retry only the failed rows.** Once a batch has any errors, a
-  **Download failed CSV** button/link produces a ready-made CSV containing
-  just the mailboxes that failed (or were interrupted) in that batch, with
-  host/port/SSL/username/options carried over and passwords left blank
-  (never stored, as always). Fill in the passwords and re-upload it via the
-  normal Bulk tab to retry just those — no need to re-run the whole
-  original file.
+- **Retry only the failed rows.** Once a batch has any errors, was stopped,
+  or was interrupted, two ways to rerun just what still needs it (never the
+  whole original file) show up next to it in History → Bulk batches:
+    - **Retry rows** opens those rows right in the browser — host/source
+      shown per row, a password field for each, **Retry selected rows**
+      starts a new batch with them. Nothing ever touches a file; the
+      passwords go straight from that form to the new batch, the same as
+      any password field in this app.
+    - **Download failed CSV** produces the same set of rows as a CSV
+      instead, with host/port/SSL/username/options carried over and
+      passwords left blank for you to fill in and re-upload via the normal
+      Bulk tab — useful if you'd rather edit the list in a spreadsheet
+      first, or hand it off to someone else to fill in.
 
 ## Scheduled delta sync
 

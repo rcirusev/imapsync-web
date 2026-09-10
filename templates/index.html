@@ -448,6 +448,7 @@
         <input type="search" id="history-search" class="filter-input" placeholder="Search by user or host…">
         <select id="history-status-filter" class="filter-select">
           <option value="all">All statuses</option>
+          <option value="queued">Queued</option>
           <option value="running">Running</option>
           <option value="success">Completed</option>
           <option value="error">Failed</option>
@@ -528,6 +529,46 @@
           </thead>
           <tbody id="batch-modal-body"></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="retry-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide">
+      <div class="modal-header">
+        <h3 id="retry-modal-title">Retry rows</h3>
+        <button class="btn btn-ghost" data-close type="button">✕</button>
+      </div>
+      <p class="hint-text">
+        Passwords are typed here and sent straight to start the retry — never
+        written to a file, and never stored. Uncheck a row to skip it.
+      </p>
+      <div class="modal-table-wrap">
+        <table class="history-table">
+          <colgroup>
+            <col style="width: 30px">
+            <col style="width: 200px">
+            <col style="width: 200px">
+            <col style="width: 170px">
+            <col style="width: 170px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th></th>
+              <th>Source</th>
+              <th>Destination</th>
+              <th>Source password</th>
+              <th>Destination password</th>
+            </tr>
+          </thead>
+          <tbody id="retry-modal-body"></tbody>
+        </table>
+      </div>
+      <span class="conn-test-status" id="retry-modal-error" hidden></span>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="retry-modal-cancel" type="button" data-close>Cancel</button>
+        <button class="btn btn-primary" id="retry-modal-submit" type="button">Retry selected rows</button>
       </div>
     </div>
   </div>

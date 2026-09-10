@@ -624,7 +624,7 @@
   });
 
   const STATUS_LABEL = {
-    running: "Running", success: "Completed", error: "Failed", interrupted: "Interrupted",
+    queued: "Queued", running: "Running", success: "Completed", error: "Failed", interrupted: "Interrupted",
   };
   const BATCH_STATUS_LABEL = {
     running: "Running", done: "Done", interrupted: "Interrupted", stopped: "Stopped",
@@ -843,6 +843,7 @@
       const started = new Date(batch.created_at * 1000).toLocaleString();
       const badgeStatus = batch.status === "done" ? "success" : batch.status;
       const displayName = batch.name || `Batch ${batch.id.slice(0, 8)}`;
+      const canRetry = batch.error > 0 || batch.status === "interrupted" || batch.status === "stopped";
       tr.innerHTML = `
         <td class="nowrap">${started}</td>
         <td>${escapeHtml(displayName)}${batch.schedule_id ? ' <span class="bulk-tag">auto</span>' : ""}</td>
@@ -853,7 +854,8 @@
         <td><div class="history-actions">
           <button class="btn btn-ghost btn-small" data-view-batch="${batch.id}">View rows</button>
           ${batch.status === "running" ? `<button class="btn btn-ghost btn-small" data-stop-batch="${batch.id}">Stop</button>` : ""}
-          ${batch.error > 0 ? `<a class="btn btn-ghost btn-small" href="/api/batches/${batch.id}/failed.csv">Download failed CSV</a>` : ""}
+          ${canRetry ? `<button class="btn btn-ghost btn-small" data-retry-batch="${batch.id}">Retry rows</button>` : ""}
+          ${canRetry ? `<a class="btn btn-ghost btn-small" href="/api/batches/${batch.id}/failed.csv">Download failed CSV</a>` : ""}
         </div></td>
       `;
       tr._batch = batch;
@@ -869,6 +871,9 @@
         btn.textContent = "Stopping…";
         requestStopBatch(btn.dataset.stopBatch, () => loadBatches());
       });
+    });
+    batchesBody.querySelectorAll("button[data-retry-batch]").forEach((btn) => {
+      btn.addEventListener("click", () => openRetryModal(btn.closest("tr")._batch));
     });
   }
 
@@ -1224,6 +1229,111 @@
         batchModalBody.innerHTML = `<tr><td colspan="7" class="history-empty">Failed to load batch rows.</td></tr>`;
       });
   }
+
+  // ---- Retry modal (re-run a batch's failed/interrupted rows without ever
+  // writing a password to a file — typed straight into this form and sent
+  // directly to /api/batches/<id>/retry, same as any other password field
+  // in this app: sent once, never stored). Alternative to "Download failed
+  // CSV" for people who don't want passwords passing through a CSV file. ----
+  const retryModal = document.getElementById("retry-modal");
+  const retryModalTitle = document.getElementById("retry-modal-title");
+  const retryModalBody = document.getElementById("retry-modal-body");
+  const retryModalError = document.getElementById("retry-modal-error");
+  const retryModalSubmit = document.getElementById("retry-modal-submit");
+  let retryBatchId = null;
+
+  retryModal.querySelectorAll("[data-close]").forEach((el) =>
+    el.addEventListener("click", () => (retryModal.hidden = true))
+  );
+
+  function openRetryModal(batch) {
+    retryBatchId = batch.id;
+    retryModal.hidden = false;
+    retryModalTitle.textContent = "Retry rows — " + (batch.name || `Batch ${batch.id.slice(0, 8)}`);
+    retryModalError.hidden = true;
+    retryModalSubmit.disabled = false;
+    retryModalSubmit.textContent = "Retry selected rows";
+    retryModalBody.innerHTML = `<tr><td colspan="5" class="history-empty">Loading…</td></tr>`;
+
+    fetch(`/api/batches/${batch.id}/jobs`)
+      .then((r) => r.json())
+      .then((jobs) => {
+        const retryable = jobs.filter((j) => j.status === "error" || j.status === "interrupted");
+        if (!retryable.length) {
+          retryModalBody.innerHTML = `<tr><td colspan="5" class="history-empty">Nothing left to retry in this batch.</td></tr>`;
+          retryModalSubmit.disabled = true;
+          return;
+        }
+        retryModalBody.innerHTML = "";
+        retryable.forEach((job) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td><input type="checkbox" class="retry-row-check" checked></td>
+            <td>${accountCell(job.user1, job.host1)}</td>
+            <td>${accountCell(job.user2, job.host2)}</td>
+            <td><input type="password" class="retry-row-password1" autocomplete="off" placeholder="••••••••"></td>
+            <td><input type="password" class="retry-row-password2" autocomplete="off" placeholder="••••••••"></td>
+          `;
+          tr._job = job;
+          retryModalBody.appendChild(tr);
+        });
+      })
+      .catch(() => {
+        retryModalBody.innerHTML = `<tr><td colspan="5" class="history-empty">Failed to load batch rows.</td></tr>`;
+      });
+  }
+
+  retryModalSubmit.addEventListener("click", () => {
+    const rows = [];
+    let missingPassword = false;
+    retryModalBody.querySelectorAll("tr").forEach((tr) => {
+      if (!tr._job) return;
+      const checked = tr.querySelector(".retry-row-check")?.checked;
+      if (!checked) return;
+      const password1 = tr.querySelector(".retry-row-password1").value;
+      const password2 = tr.querySelector(".retry-row-password2").value;
+      if (!password1 || !password2) missingPassword = true;
+      rows.push({ job_id: tr._job.id, password1, password2 });
+    });
+
+    retryModalError.hidden = true;
+    if (!rows.length) {
+      retryModalError.hidden = false;
+      retryModalError.className = "conn-test-status fail";
+      retryModalError.textContent = "Select at least one row to retry.";
+      return;
+    }
+    if (missingPassword) {
+      retryModalError.hidden = false;
+      retryModalError.className = "conn-test-status fail";
+      retryModalError.textContent = "Every selected row needs both passwords filled in.";
+      return;
+    }
+
+    retryModalSubmit.disabled = true;
+    retryModalSubmit.textContent = "Starting…";
+    fetch(`/api/batches/${retryBatchId}/retry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...CSRF_HEADERS },
+      body: JSON.stringify({ rows }),
+    })
+      .then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error || "Failed to start the retry.");
+        retryModal.hidden = true;
+        loadBatches();
+        loadHistory();
+      })
+      .catch((err) => {
+        retryModalError.hidden = false;
+        retryModalError.className = "conn-test-status fail";
+        retryModalError.textContent = err.message;
+      })
+      .finally(() => {
+        retryModalSubmit.disabled = false;
+        retryModalSubmit.textContent = "Retry selected rows";
+      });
+  });
 
   // ---- Theme toggle ----
   const root = document.documentElement;

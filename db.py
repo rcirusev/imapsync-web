@@ -148,19 +148,19 @@ def init_db(db_path):
         pass  # column already exists
 
 
-def create_job(db_path, job, batch_id=None, schedule_id=None):
+def create_job(db_path, job, batch_id=None, schedule_id=None, status="running"):
     conn = get_conn(db_path)
     conn.execute(
         """INSERT INTO jobs
            (id, created_at, host1, port1, ssl1, user1, authuser1,
             host2, port2, ssl2, user2, authuser2,
             options_json, status, log_path, batch_id, schedule_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             job["id"], job["created_at"], job["host1"], job["port1"], int(job["ssl1"]),
             job["user1"], job.get("authuser1") or None,
             job["host2"], job["port2"], int(job["ssl2"]), job["user2"], job.get("authuser2") or None,
-            json.dumps(job["options"]), job["log_path"], batch_id, schedule_id,
+            json.dumps(job["options"]), status, job["log_path"], batch_id, schedule_id,
         ),
     )
     conn.commit()
@@ -169,23 +169,27 @@ def create_job(db_path, job, batch_id=None, schedule_id=None):
 def mark_orphaned_running_as_interrupted(db_path):
     """
     Call once at process startup, right after init_db(). Any row still
-    marked 'running' at that point cannot actually be running any more —
-    this process just started, so its in-memory ACTIVE registry (and every
-    background thread / imapsync child process from before) is gone. That
-    happens when the service/VM restarts or crashes mid-migration.
+    marked 'running' or 'queued' at that point cannot actually be
+    running/pending any more — this process just started, so its in-memory
+    ACTIVE registry (and every background thread / imapsync child process
+    from before) is gone. That happens when the service/VM restarts or
+    crashes mid-migration — 'queued' specifically covers a bulk-batch row
+    that was written to the DB up front (see bulk_start/_run_scheduled_batch
+    in app.py) but whose turn to actually run never came before the crash.
 
     Re-labels those rows 'interrupted' so History stops showing a phantom
-    "Running" job forever. This does NOT lose any progress: imapsync itself
-    is incremental, so simply starting a fresh migration with the same
-    host/user settings (the History "Resume" button does this) will skip
-    whatever was already copied and only transfer the remainder.
+    "Running"/"Queued" job forever. This does NOT lose any progress:
+    imapsync itself is incremental, so simply starting a fresh migration
+    with the same host/user settings (the History "Resume" button does
+    this, or "Download failed CSV" for a whole batch) will skip whatever
+    was already copied and only transfer the remainder.
     """
     conn = get_conn(db_path)
     conn.execute(
         """UPDATE jobs SET status = 'interrupted',
                error_message = COALESCE(error_message, ?)
-           WHERE status = 'running'""",
-        ("Server restarted while this job was running.",),
+           WHERE status IN ('running', 'queued')""",
+        ("Server restarted before this job could finish.",),
     )
     conn.commit()
 
@@ -260,8 +264,16 @@ def get_batch(db_path, batch_id):
 
 
 def mark_started(db_path, job_id, started_at):
+    # Also flips status to 'running' — a bulk-batch row is pre-created as
+    # 'queued' (see create_job's status param) before its worker actually
+    # gets to it, so this is what promotes it out of that state. A no-op
+    # status-wise for a single migration, which is already 'running' by
+    # the time this is called.
     conn = get_conn(db_path)
-    conn.execute("UPDATE jobs SET started_at = ? WHERE id = ?", (started_at, job_id))
+    conn.execute(
+        "UPDATE jobs SET status = 'running', started_at = ? WHERE id = ?",
+        (started_at, job_id),
+    )
     conn.commit()
 
 

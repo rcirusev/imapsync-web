@@ -402,6 +402,7 @@ legend {
 }
 
 .status-idle    { color: var(--text-muted); background: var(--page-plane); }
+.status-queued  { color: var(--text-muted); background: var(--page-plane); }
 .status-running { color: #0d5fb0; background: rgba(42, 120, 214, 0.14); }
 .status-success { color: var(--status-good); background: rgba(12, 163, 12, 0.12); }
 .status-error   { color: var(--status-critical); background: rgba(208, 59, 59, 0.12); }

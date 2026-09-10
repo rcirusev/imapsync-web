@@ -370,14 +370,27 @@ def _run_batch_thread(batch_id, rows, schedule_id=None, max_concurrent=1):
     stopped_event = threading.Event()
 
     def run_row(index, row):
+        # Every row already has a DB row in status "queued" — written up
+        # front by the caller (bulk_start / _run_scheduled_batch) before this
+        # thread pool even starts, precisely so a row still waiting its turn
+        # isn't lost without a trace if the server dies before it gets one.
+        job = _new_job_dict(row, job_id=row.get("_job_id"))
+
         with BATCH_CANCEL_LOCK:
             if batch_id in BATCH_CANCEL_REQUESTS:
                 stopped_event.set()
         if stopped_event.is_set():
-            return  # a Stop request landed before this row got its turn — skip it
+            # A Stop request landed before this row got its turn — leave it
+            # as a normal "interrupted" row (same as a server crash would)
+            # instead of silently vanishing, so "Download failed CSV" still
+            # picks it up.
+            db.finish_job(
+                DB_PATH, job["id"], status="interrupted", finished_at=time.time(),
+                folders=None, messages=None, data_mb=None, errors=None, duration_s=None,
+                return_code=None, error_message="Batch was stopped before this row started.",
+            )
+            return
 
-        job = _new_job_dict(row, job_id=row.get("_job_id"))
-        db.create_job(DB_PATH, job, batch_id=batch_id, schedule_id=schedule_id)
         with ACTIVE_LOCK:
             ACTIVE[job["id"]] = {"lines": [], "subscribers": [], "done": False}
 
@@ -477,6 +490,20 @@ def bulk_start():
     with BATCHES_LOCK:
         BATCHES[batch_id] = {"lines": [], "subscribers": [], "done": False}
 
+    # Every row gets a DB row up front, status "queued" (host/user/options
+    # only — never a password), before any of them actually run. Otherwise a
+    # row still waiting its turn (likely for most of a large batch, e.g. at
+    # max_concurrent=1) has no record anywhere if the server dies before its
+    # turn comes — the uploaded CSV itself is never saved to disk, so that
+    # row's host/user would simply be gone, forcing a full CSV re-upload
+    # instead of just "Download failed CSV" picking it up like any other
+    # interrupted row (see mark_orphaned_running_as_interrupted).
+    for row in rows:
+        db.create_job(
+            DB_PATH, _new_job_dict(row, job_id=row["_job_id"]),
+            batch_id=batch_id, status="queued",
+        )
+
     schedule_enabled = (request.form.get("schedule_enabled") or "").lower() in ("1", "true", "yes", "on")
     if schedule_enabled:
         interval_hours = float(request.form.get("schedule_interval_hours") or 0)
@@ -515,6 +542,79 @@ def batch_failed_csv(batch_id):
         bulk_csv.build_rows_csv(jobs), mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename=imapsync-retry-{batch_id[:8]}.csv"},
     )
+
+
+@app.route("/api/batches/<batch_id>/retry", methods=["POST"])
+def batch_retry(batch_id):
+    """
+    Re-runs a chosen subset of one batch's failed/interrupted rows as a new
+    batch — the in-browser alternative to "Download failed CSV" for anyone
+    who'd rather not have passwords pass through a CSV file at all. Each
+    row's host/port/SSL/username/options are pulled back out of that row's
+    own DB record (never trusted from the client); only the passwords come
+    from the request, and only ever to kick this retry off — same as every
+    other password in this app, never stored.
+    """
+    if not IMAPSYNC_BIN:
+        return jsonify({
+            "error": "imapsync binary not found on this server. Run install.sh, "
+                     "or set IMAPSYNC_BIN, then restart the service."
+        }), 503
+
+    batch = db.get_batch(DB_PATH, batch_id)
+    if not batch:
+        return jsonify({"error": "Unknown batch id."}), 404
+
+    entries = (request.get_json(silent=True) or {}).get("rows") or []
+    rows, row_errors = [], []
+    for entry in entries:
+        job_id = entry.get("job_id")
+        original = db.get_job(DB_PATH, job_id) if job_id else None
+        if not original or original.get("batch_id") != batch_id:
+            row_errors.append({"row": job_id or "?", "reason": "Unknown row for this batch."})
+            continue
+        if original["status"] not in ("error", "interrupted"):
+            row_errors.append({"row": job_id, "reason": "Row is not in a retryable state."})
+            continue
+        password1 = (entry.get("password1") or "").strip()
+        password2 = (entry.get("password2") or "").strip()
+        if not password1 or not password2:
+            row_errors.append({"row": job_id, "reason": "Missing password(s)."})
+            continue
+        rows.append({
+            "host1": original["host1"], "port1": original["port1"], "ssl1": bool(original["ssl1"]),
+            "user1": original["user1"], "authuser1": original.get("authuser1") or None, "password1": password1,
+            "host2": original["host2"], "port2": original["port2"], "ssl2": bool(original["ssl2"]),
+            "user2": original["user2"], "authuser2": original.get("authuser2") or None, "password2": password2,
+            "options": json.loads(original["options_json"] or "{}"),
+            "_job_id": str(uuid.uuid4()),
+        })
+
+    if not rows:
+        return jsonify({"error": "No valid rows to retry.", "row_errors": row_errors}), 400
+
+    base_name = batch.get("name") or f"Batch {batch_id[:8]}"
+    max_concurrent = min(max(int(batch.get("max_concurrent") or 1), 1), MAX_BATCH_CONCURRENCY)
+
+    new_batch_id = str(uuid.uuid4())
+    db.create_batch(
+        DB_PATH, new_batch_id, len(rows), time.time(),
+        name=f"{base_name} (retry)", max_concurrent=max_concurrent,
+    )
+    with BATCHES_LOCK:
+        BATCHES[new_batch_id] = {"lines": [], "subscribers": [], "done": False}
+    for row in rows:
+        db.create_job(
+            DB_PATH, _new_job_dict(row, job_id=row["_job_id"]),
+            batch_id=new_batch_id, status="queued",
+        )
+
+    threading.Thread(
+        target=_run_batch_thread, args=(new_batch_id, rows),
+        kwargs={"max_concurrent": max_concurrent}, daemon=True,
+    ).start()
+
+    return jsonify({"batch_id": new_batch_id, "total": len(rows), "row_errors": row_errors})
 
 
 @app.route("/api/bulk/stream/<batch_id>")
@@ -593,6 +693,15 @@ def _run_scheduled_batch(sched):
     )
     with BATCHES_LOCK:
         BATCHES[batch_id] = {"lines": [], "subscribers": [], "done": False}
+
+    # Same up-front "queued" row per CSV row as bulk_start — see the comment
+    # there for why.
+    for row in rows:
+        db.create_job(
+            DB_PATH, _new_job_dict(row, job_id=row["_job_id"]),
+            batch_id=batch_id, schedule_id=sched["id"], status="queued",
+        )
+
     _run_batch_thread(batch_id, rows, schedule_id=sched["id"], max_concurrent=max_concurrent)
 
 
