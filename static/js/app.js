@@ -632,11 +632,11 @@
       <td class="nowrap">${sched.interval_hours}h</td>
       <td class="nowrap">${fmtRelative(sched.last_run_at)}</td>
       <td class="nowrap">${fmtRelative(sched.next_run_at)}</td>
-      <td class="history-actions">
+      <td><div class="history-actions">
         <button class="btn btn-ghost btn-small" data-edit-schedule="${sched.id}">Edit</button>
         <button class="btn btn-ghost btn-small" data-run-now="${sched.id}">Run now</button>
         <button class="btn btn-ghost btn-small" data-delete-schedule="${sched.id}">Delete</button>
-      </td>
+      </div></td>
     `;
     return tr;
   }
@@ -815,11 +815,11 @@
         <td class="nowrap">${batch.success}</td>
         <td class="nowrap">${batch.error}</td>
         <td class="nowrap"><span class="status-badge status-${badgeStatus}">${BATCH_STATUS_LABEL[batch.status] || batch.status}</span></td>
-        <td class="history-actions">
+        <td><div class="history-actions">
           <button class="btn btn-ghost btn-small" data-view-batch="${batch.id}">View rows</button>
           ${batch.status === "running" ? `<button class="btn btn-ghost btn-small" data-stop-batch="${batch.id}">Stop</button>` : ""}
           ${batch.error > 0 ? `<a class="btn btn-ghost btn-small" href="/api/batches/${batch.id}/failed.csv">Download failed CSV</a>` : ""}
-        </td>
+        </div></td>
       `;
       tr._batch = batch;
       batchesBody.appendChild(tr);
@@ -862,10 +862,10 @@
         <td class="nowrap">${fmtOrDash(job.messages)}</td>
         <td class="nowrap">${fmtOrDash(job.errors)}</td>
         <td class="nowrap">${fmtDuration(job.duration_s)}</td>
-        <td class="history-actions">
+        <td><div class="history-actions">
           <button class="btn btn-ghost btn-small" data-job="${job.id}">View log</button>
           ${canResume ? `<button class="btn btn-ghost btn-small" data-resume="${job.id}">Resume</button>` : ""}
-        </td>
+        </div></td>
       `;
       tr._job = job;
       historyBody.appendChild(tr);
@@ -1160,10 +1160,10 @@
             <td class="nowrap">${fmtOrDash(job.messages)}</td>
             <td class="nowrap">${fmtOrDash(job.errors)}</td>
             <td class="nowrap">${fmtDuration(job.duration_s)}</td>
-            <td class="history-actions">
+            <td><div class="history-actions">
               <button class="btn btn-ghost btn-small" data-job="${job.id}">View log</button>
               ${canResume ? `<button class="btn btn-ghost btn-small" data-resume="${job.id}">Resume</button>` : ""}
-            </td>
+            </div></td>
           `;
           tr._job = job;
           batchModalBody.appendChild(tr);
