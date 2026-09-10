@@ -962,7 +962,93 @@
   // ---- Log modal ----
   const modal = document.getElementById("log-modal");
   const modalLog = document.getElementById("modal-log");
+  const modalPanel = modal.querySelector(".modal-panel-log");
   let modalSource = null;
+
+  // The log modal sizes itself from the log's own content — wide progress
+  // lines get a wider box, a short finished-job log gets a small one —
+  // capped by the monitor size via the CSS on .modal-panel-log. Dragging
+  // the resize handle overrides that: the chosen size is remembered
+  // (localStorage) and reused for every log afterwards instead of being
+  // recomputed from content, until the person resizes it again.
+  const LOG_MODAL_SIZE_KEY = "imapsyncweb.logModalSize";
+  let modalProgrammaticResize = false;
+  let modalLastFitAt = 0;
+
+  function readSavedModalSize() {
+    try {
+      const raw = localStorage.getItem(LOG_MODAL_SIZE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.w === "number" && typeof parsed.h === "number") return parsed;
+    } catch (_) {
+      // localStorage unavailable (private browsing, etc.) or a corrupt
+      // value — fall back to content-based sizing below.
+    }
+    return null;
+  }
+
+  function saveModalSize(w, h) {
+    try {
+      localStorage.setItem(LOG_MODAL_SIZE_KEY, JSON.stringify({ w, h }));
+    } catch (_) {
+      // Nothing to fall back to but the CSS default — not worth surfacing.
+    }
+  }
+
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => {
+      if (modalProgrammaticResize) {
+        // This callback fired because of our own style.width/height
+        // assignment below, not a manual drag — ignore it once.
+        modalProgrammaticResize = false;
+        return;
+      }
+      if (modal.hidden) return;
+      const rect = modalPanel.getBoundingClientRect();
+      saveModalSize(Math.round(rect.width), Math.round(rect.height));
+    }).observe(modalPanel);
+  }
+
+  // Offscreen element used only to measure how wide a line of the log
+  // text renders at the modal's actual font, so the initial size fits
+  // the content instead of guessing.
+  const modalMeasurer = document.createElement("pre");
+  modalMeasurer.style.cssText =
+    "position:absolute; visibility:hidden; top:-9999px; left:-9999px; margin:0; " +
+    "white-space:pre; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; " +
+    "font-size:13px; line-height:1.5;";
+  document.body.appendChild(modalMeasurer);
+
+  function fitLogModalToContent(text) {
+    const saved = readSavedModalSize();
+    if (saved) {
+      modalProgrammaticResize = true;
+      modalPanel.style.width = saved.w + "px";
+      modalPanel.style.height = saved.h + "px";
+      return;
+    }
+
+    modalMeasurer.textContent = text || "";
+    const lineCount = (text || "").split("\n").length;
+    const lineHeightPx = 13 * 1.5; // matches .modal-panel-log .console
+    const chromeHeight = 90; // modal header + panel/console padding, approx
+    const chromePlusScrollbarWidth = 64; // panel padding + a little slack
+
+    const targetWidth = Math.min(
+      Math.max(modalMeasurer.scrollWidth + chromePlusScrollbarWidth, 480),
+      Math.round(window.innerWidth * 0.96),
+      1400
+    );
+    const targetHeight = Math.min(
+      Math.max(lineCount * lineHeightPx + chromeHeight, 320),
+      Math.round(window.innerHeight * 0.9)
+    );
+
+    modalProgrammaticResize = true;
+    modalPanel.style.width = targetWidth + "px";
+    modalPanel.style.height = targetHeight + "px";
+  }
 
   function stopModalStream() {
     if (modalSource) {
@@ -980,13 +1066,21 @@
 
   function openLogModal(jobId) {
     stopModalStream();
+    // Unhiding the modal (display: none -> flex) fires its own resize
+    // notification before any content has loaded — mark it programmatic
+    // so it isn't mistaken for a manual drag before fitLogModalToContent
+    // below gets a chance to run.
+    modalProgrammaticResize = true;
     modal.hidden = false;
     modalLog.textContent = "Loading…";
 
     const showSavedLog = () => {
       fetch(`/api/jobs/${jobId}/log`)
         .then((r) => r.text())
-        .then((text) => (modalLog.textContent = text || "(empty log)"));
+        .then((text) => {
+          modalLog.textContent = text || "(empty log)";
+          fitLogModalToContent(modalLog.textContent);
+        });
     };
 
     fetch(`/api/jobs/${jobId}`)
@@ -1004,11 +1098,19 @@
         modalSource.addEventListener("log", (e) => {
           modalLog.textContent += JSON.parse(e.data).line + "\n";
           modalLog.scrollTop = modalLog.scrollHeight;
+          // Refit as the log grows, throttled so a fast-scrolling progress
+          // stream doesn't recompute layout on every single line.
+          const now = Date.now();
+          if (now - modalLastFitAt > 500) {
+            modalLastFitAt = now;
+            fitLogModalToContent(modalLog.textContent);
+          }
         });
         modalSource.addEventListener("done", (e) => {
           const stats = JSON.parse(e.data);
           stopModalStream();
           modalLog.textContent += `\n--- finished: ${STATUS_LABEL[stats.status] || stats.status} ---`;
+          fitLogModalToContent(modalLog.textContent);
           loadHistory();
         });
         modalSource.onerror = stopModalStream;

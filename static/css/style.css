@@ -493,7 +493,7 @@ legend {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12.5px;
   line-height: 1.65;
-  height: 320px;
+  height: clamp(240px, 45vh, 560px);
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -726,6 +726,14 @@ legend {
 .modal-panel-log {
   width: min(1400px, 96vw);
   max-height: 90vh;
+  /* Sized automatically from the log's content on open (see openLogModal
+     in app.js), clamped to the monitor via the width/max-height above.
+     Also user-resizable (drag the bottom-right corner) — a manual resize
+     is remembered and takes over from the automatic sizing. */
+  min-width: 480px;
+  min-height: 320px;
+  resize: both;
+  overflow: hidden;
 }
 
 .modal-panel-log .console {
