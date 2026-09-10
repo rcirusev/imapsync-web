@@ -41,6 +41,24 @@ import imapsync_runner as runner
 
 app = Flask(__name__)
 
+
+def _asset_version(filename):
+    """Mtime of a static file, used as a cache-busting query string so a
+    browser that already cached the old app.js/style.css from a previous
+    deploy is forced to fetch the new one instead of silently keeping
+    stale JS/CSS after `docker compose pull && up -d` ships a fix."""
+    path = os.path.join(app.static_folder, filename)
+    try:
+        return str(int(os.path.getmtime(path)))
+    except OSError:
+        return "0"
+
+
+@app.context_processor
+def _inject_asset_version():
+    return {"asset_version": _asset_version}
+
+
 DATA_DIR = os.environ.get("IMAPSYNC_WEB_DATA_DIR") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "data"
 )
