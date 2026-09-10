@@ -633,10 +633,18 @@ legend {
   color: var(--text-primary);
 }
 
+.table-wrap {
+  overflow-x: auto;
+}
+
 .history-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+}
+
+.nowrap {
+  white-space: nowrap;
 }
 
 .history-table th {
@@ -670,7 +678,8 @@ legend {
 .history-actions {
   display: flex;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .bulk-tag {

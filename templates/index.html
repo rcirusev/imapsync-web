@@ -284,21 +284,23 @@
         <h2>Bulk run results</h2>
         <span id="bulk-summary" class="status-badge status-idle"></span>
       </div>
+      <div class="table-wrap">
       <table class="history-table">
         <thead>
           <tr>
-            <th>#</th>
+            <th class="nowrap">#</th>
             <th>Source</th>
             <th>Destination</th>
-            <th>Status</th>
-            <th>Msgs</th>
-            <th>Errors</th>
-            <th>Duration</th>
+            <th class="nowrap">Status</th>
+            <th class="nowrap">Msgs</th>
+            <th class="nowrap">Errors</th>
+            <th class="nowrap">Duration</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="bulk-results-body"></tbody>
       </table>
+      </div>
     </section>
 
   </main>
@@ -314,13 +316,14 @@
         mail. Re-running only ever copies the delta — imapsync skips
         whatever's already on the destination.
       </p>
+      <div class="table-wrap">
       <table class="history-table">
         <thead>
           <tr>
             <th>Accounts / batch</th>
-            <th>Every</th>
-            <th>Last run</th>
-            <th>Next run</th>
+            <th class="nowrap">Every</th>
+            <th class="nowrap">Last run</th>
+            <th class="nowrap">Next run</th>
             <th></th>
           </tr>
         </thead>
@@ -328,6 +331,7 @@
           <tr><td colspan="5" class="history-empty">No scheduled delta syncs yet.</td></tr>
         </tbody>
       </table>
+      </div>
     </section>
 
     <section class="card">
@@ -350,15 +354,16 @@
           <option value="stopped">Stopped</option>
         </select>
       </div>
+      <div class="table-wrap">
       <table class="history-table">
         <thead>
           <tr>
-            <th>Started</th>
+            <th class="nowrap">Started</th>
             <th>Batch</th>
-            <th>Progress</th>
-            <th>Success</th>
-            <th>Errors</th>
-            <th>Status</th>
+            <th class="nowrap">Progress</th>
+            <th class="nowrap">Success</th>
+            <th class="nowrap">Errors</th>
+            <th class="nowrap">Status</th>
             <th></th>
           </tr>
         </thead>
@@ -366,6 +371,7 @@
           <tr><td colspan="7" class="history-empty">No bulk migrations yet.</td></tr>
         </tbody>
       </table>
+      </div>
     </section>
 
     <section class="card">
@@ -392,16 +398,17 @@
           <option value="interrupted">Interrupted</option>
         </select>
       </div>
+      <div class="table-wrap">
       <table class="history-table">
         <thead>
           <tr>
-            <th>Started</th>
+            <th class="nowrap">Started</th>
             <th>Source</th>
             <th>Destination</th>
-            <th>Status</th>
-            <th>Msgs</th>
-            <th>Errors</th>
-            <th>Duration</th>
+            <th class="nowrap">Status</th>
+            <th class="nowrap">Msgs</th>
+            <th class="nowrap">Errors</th>
+            <th class="nowrap">Duration</th>
             <th></th>
           </tr>
         </thead>
@@ -409,6 +416,7 @@
           <tr><td colspan="8" class="history-empty">No migrations yet.</td></tr>
         </tbody>
       </table>
+      </div>
     </section>
   </main>
 
@@ -436,10 +444,10 @@
             <tr>
               <th>Source</th>
               <th>Destination</th>
-              <th>Status</th>
-              <th>Msgs</th>
-              <th>Errors</th>
-              <th>Duration</th>
+              <th class="nowrap">Status</th>
+              <th class="nowrap">Msgs</th>
+              <th class="nowrap">Errors</th>
+              <th class="nowrap">Duration</th>
               <th></th>
             </tr>
           </thead>

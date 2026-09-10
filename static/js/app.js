@@ -453,13 +453,13 @@
       const row = JSON.parse(e.data);
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td>${row.index}/${row.total}</td>
+        <td class="nowrap">${row.index}/${row.total}</td>
         <td>${escapeHtml(row.user1)}@${escapeHtml(row.host1)}</td>
         <td>${escapeHtml(row.user2)}@${escapeHtml(row.host2)}</td>
-        <td><span class="status-badge status-${row.status}">${STATUS_LABEL[row.status] || row.status}</span></td>
-        <td>${fmtOrDash(row.messages)}</td>
-        <td>${fmtOrDash(row.errors)}</td>
-        <td>${fmtDuration(row.duration_s)}</td>
+        <td class="nowrap"><span class="status-badge status-${row.status}">${STATUS_LABEL[row.status] || row.status}</span></td>
+        <td class="nowrap">${fmtOrDash(row.messages)}</td>
+        <td class="nowrap">${fmtOrDash(row.errors)}</td>
+        <td class="nowrap">${fmtDuration(row.duration_s)}</td>
         <td><button class="btn btn-ghost btn-small" data-job="${row.job_id}">View log</button></td>
       `;
       bulkResultsBody.appendChild(tr);
@@ -612,9 +612,9 @@
     tr._sched = sched;
     tr.innerHTML = `
       <td>${escapeHtml(sched.label)}${sched.kind === "batch" ? ' <span class="bulk-tag">bulk</span>' : ""}</td>
-      <td>${sched.interval_hours}h</td>
-      <td>${fmtRelative(sched.last_run_at)}</td>
-      <td>${fmtRelative(sched.next_run_at)}</td>
+      <td class="nowrap">${sched.interval_hours}h</td>
+      <td class="nowrap">${fmtRelative(sched.last_run_at)}</td>
+      <td class="nowrap">${fmtRelative(sched.next_run_at)}</td>
       <td class="history-actions">
         <button class="btn btn-ghost btn-small" data-edit-schedule="${sched.id}">Edit</button>
         <button class="btn btn-ghost btn-small" data-run-now="${sched.id}">Run now</button>
@@ -800,12 +800,12 @@
       const badgeStatus = batch.status === "done" ? "success" : batch.status;
       const displayName = batch.name || `Batch ${batch.id.slice(0, 8)}`;
       tr.innerHTML = `
-        <td>${started}</td>
+        <td class="nowrap">${started}</td>
         <td>${escapeHtml(displayName)}${batch.schedule_id ? ' <span class="bulk-tag">auto</span>' : ""}</td>
-        <td>${batch.completed}/${batch.total}</td>
-        <td>${batch.success}</td>
-        <td>${batch.error}</td>
-        <td><span class="status-badge status-${badgeStatus}">${BATCH_STATUS_LABEL[batch.status] || batch.status}</span></td>
+        <td class="nowrap">${batch.completed}/${batch.total}</td>
+        <td class="nowrap">${batch.success}</td>
+        <td class="nowrap">${batch.error}</td>
+        <td class="nowrap"><span class="status-badge status-${badgeStatus}">${BATCH_STATUS_LABEL[batch.status] || batch.status}</span></td>
         <td class="history-actions">
           <button class="btn btn-ghost btn-small" data-view-batch="${batch.id}">View rows</button>
           ${batch.status === "running" ? `<button class="btn btn-ghost btn-small" data-stop-batch="${batch.id}">Stop</button>` : ""}
@@ -846,13 +846,13 @@
         ? new Date(job.started_at * 1000).toLocaleString()
         : new Date(job.created_at * 1000).toLocaleString();
       tr.innerHTML = `
-        <td>${started}${job.batch_id ? ' <span class="bulk-tag">bulk</span>' : ""}${job.schedule_id ? ' <span class="bulk-tag">auto</span>' : ""}</td>
+        <td class="nowrap">${started}${job.batch_id ? ' <span class="bulk-tag">bulk</span>' : ""}${job.schedule_id ? ' <span class="bulk-tag">auto</span>' : ""}</td>
         <td>${escapeHtml(job.user1)}@${escapeHtml(job.host1)}${job.authuser1 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser1) + '">master</span>' : ""}</td>
         <td>${escapeHtml(job.user2)}@${escapeHtml(job.host2)}${job.authuser2 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser2) + '">master</span>' : ""}</td>
-        <td><span class="status-badge status-${job.status}">${STATUS_LABEL[job.status] || job.status}</span></td>
-        <td>${fmtOrDash(job.messages)}</td>
-        <td>${fmtOrDash(job.errors)}</td>
-        <td>${fmtDuration(job.duration_s)}</td>
+        <td class="nowrap"><span class="status-badge status-${job.status}">${STATUS_LABEL[job.status] || job.status}</span></td>
+        <td class="nowrap">${fmtOrDash(job.messages)}</td>
+        <td class="nowrap">${fmtOrDash(job.errors)}</td>
+        <td class="nowrap">${fmtDuration(job.duration_s)}</td>
         <td class="history-actions">
           <button class="btn btn-ghost btn-small" data-job="${job.id}">View log</button>
           ${canResume ? `<button class="btn btn-ghost btn-small" data-resume="${job.id}">Resume</button>` : ""}
@@ -1045,10 +1045,10 @@
           tr.innerHTML = `
             <td>${escapeHtml(job.user1)}@${escapeHtml(job.host1)}</td>
             <td>${escapeHtml(job.user2)}@${escapeHtml(job.host2)}</td>
-            <td><span class="status-badge status-${job.status}">${STATUS_LABEL[job.status] || job.status}</span></td>
-            <td>${fmtOrDash(job.messages)}</td>
-            <td>${fmtOrDash(job.errors)}</td>
-            <td>${fmtDuration(job.duration_s)}</td>
+            <td class="nowrap"><span class="status-badge status-${job.status}">${STATUS_LABEL[job.status] || job.status}</span></td>
+            <td class="nowrap">${fmtOrDash(job.messages)}</td>
+            <td class="nowrap">${fmtOrDash(job.errors)}</td>
+            <td class="nowrap">${fmtDuration(job.duration_s)}</td>
             <td class="history-actions">
               <button class="btn btn-ghost btn-small" data-job="${job.id}">View log</button>
               ${canResume ? `<button class="btn btn-ghost btn-small" data-resume="${job.id}">Resume</button>` : ""}

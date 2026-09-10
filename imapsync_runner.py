@@ -140,6 +140,15 @@ def parse_summary(log_text, returncode):
     else:
         status = "error"
 
+    # On a successful run, imapsync only prints an "N identified messages"/
+    # per-message copy line when there was at least one message to sync —
+    # a delta run that finds nothing new to copy prints neither, which
+    # previously left `messages` as None (shown as "–" in the UI) even
+    # though 0 is the accurate count. Mirror the same success-implies-0
+    # fallback already used for `errors` below.
+    if messages is None and status == "success":
+        messages = 0
+
     return {
         "status": status,
         "folders": folders,
