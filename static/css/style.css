@@ -641,6 +641,18 @@ legend {
   border-bottom: 1px solid var(--gridline);
 }
 
+/* Auto table layout otherwise sometimes shortchanges the actions column
+   (View log/Edit/Run now/Delete) of the width its nowrap buttons need,
+   letting them spill past their own cell's right edge — visually
+   "outside" the row's bottom border, which then looks like it stops
+   short of the card's edge instead of running under the buttons.
+   width: 1% is the standard idiom for "shrink this column to fit its
+   content exactly"; the remaining columns absorb the rest of the row. */
+.history-table th.nowrap,
+.history-table th:last-child {
+  width: 1%;
+}
+
 .history-table td {
   padding: 10px;
   border-bottom: 1px solid var(--gridline);
