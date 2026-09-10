@@ -129,7 +129,7 @@
     return (
       '<div class="account-cell">' +
       `<span class="account-name">${escapeHtml(user)}</span>${badgeHtml || ""}` +
-      `<span class="account-host">@${escapeHtml(host)}</span>` +
+      `<span class="account-host">${escapeHtml(host)}</span>` +
       "</div>"
     );
   }
