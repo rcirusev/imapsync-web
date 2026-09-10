@@ -604,6 +604,17 @@ legend {
   color: var(--text-primary);
 }
 
+.schedule-interval-input {
+  font-family: inherit;
+  font-size: 13px;
+  width: 56px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+}
+
 .schedule-edit-form {
   display: flex;
   align-items: center;
@@ -621,6 +632,7 @@ legend {
   background: transparent;
   color: var(--text-primary);
   min-width: 220px;
+  flex: 1 1 220px;
 }
 
 .filter-select {

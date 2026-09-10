@@ -635,13 +635,18 @@
                placeholder="New destination password (leave blank to keep)" autocomplete="off">
       `
       : `<span class="field-hint">Passwords can't be edited for a batch — re-upload the CSV instead.</span>`;
+    // One <td> per header column (Accounts/batch, Every, Last run + Next
+    // run merged, actions) so the edit row's fields land under the same
+    // headers as the normal row, instead of one wide block that drifted
+    // out from under "EVERY"/"LAST RUN"/"NEXT RUN".
     tr.innerHTML = `
-      <td colspan="4">
+      <td>${escapeHtml(sched.label)}${sched.kind === "batch" ? ' <span class="bulk-tag">bulk</span>' : ""}</td>
+      <td class="nowrap">
+        <input type="number" min="0.25" step="0.25" value="${sched.interval_hours}"
+               class="schedule-interval-input" data-edit-interval aria-label="Every, hours">h
+      </td>
+      <td colspan="2">
         <div class="schedule-edit-form">
-          <label class="field field-small">
-            <span>Every (hours)</span>
-            <input type="number" min="0.25" step="0.25" value="${sched.interval_hours}" data-edit-interval>
-          </label>
           ${passwordFields}
           <span class="conn-test-status" data-edit-error hidden></span>
         </div>
