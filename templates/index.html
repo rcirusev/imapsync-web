@@ -457,6 +457,39 @@
     </div>
   </div>
 
+  <div id="schedule-edit-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h3>Edit schedule</h3>
+        <button class="btn btn-ghost" data-close type="button">✕</button>
+      </div>
+      <p id="schedule-edit-label" class="hint-text"></p>
+      <label class="field schedule-edit-interval-field">
+        <span>Every (hours)</span>
+        <input type="number" min="0.25" step="0.25" id="schedule-edit-interval">
+      </label>
+      <div id="schedule-edit-password-fields">
+        <label class="field">
+          <span>New source password (leave blank to keep)</span>
+          <input type="password" id="schedule-edit-password1" autocomplete="off">
+        </label>
+        <label class="field">
+          <span>New destination password (leave blank to keep)</span>
+          <input type="password" id="schedule-edit-password2" autocomplete="off">
+        </label>
+      </div>
+      <p id="schedule-edit-batch-hint" class="field-hint" hidden>
+        Passwords can't be edited for a batch — re-upload the CSV instead.
+      </p>
+      <span class="conn-test-status" id="schedule-edit-error" hidden></span>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="schedule-edit-cancel" type="button" data-close>Cancel</button>
+        <button class="btn btn-primary" id="schedule-edit-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
   <footer class="page-footer">
     Front-end for <a href="https://github.com/imapsync/imapsync" target="_blank" rel="noopener">imapsync</a>.
     Every run shown here calls the real <code>imapsync</code> binary installed on this server.

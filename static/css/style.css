@@ -273,6 +273,8 @@ legend {
 
 .field-small { flex: 0 0 100px; margin-top: 0; }
 
+.schedule-edit-interval-field input { max-width: 120px; }
+
 .field-checkbox {
   display: flex;
   align-items: center;
@@ -604,37 +606,6 @@ legend {
   color: var(--text-primary);
 }
 
-.schedule-interval-input {
-  font-family: inherit;
-  font-size: 13px;
-  width: 56px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-primary);
-}
-
-.schedule-edit-form {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 6px 0;
-}
-
-.schedule-edit-form input[type="password"] {
-  font-family: inherit;
-  font-size: 13px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-primary);
-  min-width: 220px;
-  flex: 1 1 220px;
-}
-
 .filter-select {
   font-family: inherit;
   font-size: 13px;
@@ -766,6 +737,15 @@ legend {
 }
 
 .modal-header h3 { margin: 0; font-size: 15px; }
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--gridline);
+}
 
 .modal-panel .console {
   height: auto;

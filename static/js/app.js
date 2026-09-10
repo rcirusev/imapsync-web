@@ -624,41 +624,6 @@
     return tr;
   }
 
-  function renderScheduleEditRow(sched) {
-    const tr = document.createElement("tr");
-    tr._sched = sched;
-    const passwordFields = sched.kind === "job"
-      ? `
-        <input type="password" class="filter-input" data-edit-password1
-               placeholder="New source password (leave blank to keep)" autocomplete="off">
-        <input type="password" class="filter-input" data-edit-password2
-               placeholder="New destination password (leave blank to keep)" autocomplete="off">
-      `
-      : `<span class="field-hint">Passwords can't be edited for a batch — re-upload the CSV instead.</span>`;
-    // One <td> per header column (Accounts/batch, Every, Last run + Next
-    // run merged, actions) so the edit row's fields land under the same
-    // headers as the normal row, instead of one wide block that drifted
-    // out from under "EVERY"/"LAST RUN"/"NEXT RUN".
-    tr.innerHTML = `
-      <td>${escapeHtml(sched.label)}${sched.kind === "batch" ? ' <span class="bulk-tag">bulk</span>' : ""}</td>
-      <td class="nowrap">
-        <input type="number" min="0.25" step="0.25" value="${sched.interval_hours}"
-               class="schedule-interval-input" data-edit-interval aria-label="Every, hours">h
-      </td>
-      <td colspan="2">
-        <div class="schedule-edit-form">
-          ${passwordFields}
-          <span class="conn-test-status" data-edit-error hidden></span>
-        </div>
-      </td>
-      <td class="history-actions">
-        <button class="btn btn-primary btn-small" data-save-schedule="${sched.id}">Save</button>
-        <button class="btn btn-ghost btn-small" data-cancel-schedule="${sched.id}">Cancel</button>
-      </td>
-    `;
-    return tr;
-  }
-
   function renderSchedules() {
     if (!allSchedules.length) {
       schedulesBody.innerHTML = `<tr><td colspan="5" class="history-empty">No scheduled delta syncs yet.</td></tr>`;
@@ -687,61 +652,83 @@
       });
     });
     schedulesBody.querySelectorAll("button[data-edit-schedule]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const tr = btn.closest("tr");
-        tr.replaceWith(renderScheduleEditRow(tr._sched));
-        wireScheduleEditRow(tr._sched.id);
-      });
+      btn.addEventListener("click", () => openScheduleEditModal(btn.closest("tr")._sched));
     });
   }
 
-  function wireScheduleEditRow(scheduleId) {
-    const tr = schedulesBody.querySelector(
-      `button[data-save-schedule="${scheduleId}"]`
-    ).closest("tr");
-    const errorEl = tr.querySelector("[data-edit-error]");
+  // ---- Schedule edit modal (replaces the old in-row edit form, which
+  // stretched across the table and no longer lined up with the column
+  // headers once passwords were involved) ----
+  const scheduleEditModal = document.getElementById("schedule-edit-modal");
+  const scheduleEditLabel = document.getElementById("schedule-edit-label");
+  const scheduleEditInterval = document.getElementById("schedule-edit-interval");
+  const scheduleEditPasswordFields = document.getElementById("schedule-edit-password-fields");
+  const scheduleEditBatchHint = document.getElementById("schedule-edit-batch-hint");
+  const scheduleEditPassword1 = document.getElementById("schedule-edit-password1");
+  const scheduleEditPassword2 = document.getElementById("schedule-edit-password2");
+  const scheduleEditError = document.getElementById("schedule-edit-error");
+  const scheduleEditSaveBtn = document.getElementById("schedule-edit-save");
+  let scheduleEditId = null;
 
-    tr.querySelector("[data-cancel-schedule]").addEventListener("click", () => {
-      renderSchedules();
-    });
+  function closeScheduleEditModal() {
+    scheduleEditModal.hidden = true;
+    scheduleEditId = null;
+  }
 
-    tr.querySelector("[data-save-schedule]").addEventListener("click", () => {
-      const intervalInput = tr.querySelector("[data-edit-interval]");
-      const interval = parseFloat(intervalInput.value);
-      if (!interval || interval < 0.25) {
-        errorEl.hidden = false;
-        errorEl.className = "conn-test-status fail";
-        errorEl.textContent = "Minimum interval is 0.25h (15 minutes).";
-        return;
-      }
-      const pw1El = tr.querySelector("[data-edit-password1]");
-      const pw2El = tr.querySelector("[data-edit-password2]");
-      const saveBtn = tr.querySelector("[data-save-schedule]");
-      saveBtn.disabled = true;
-      saveBtn.textContent = "Saving…";
-      fetch(`/api/schedules/${scheduleId}/edit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...CSRF_HEADERS },
-        body: JSON.stringify({
-          interval_hours: interval,
-          password1: pw1El ? pw1El.value : "",
-          password2: pw2El ? pw2El.value : "",
-        }),
+  scheduleEditModal.querySelectorAll("[data-close]").forEach((el) =>
+    el.addEventListener("click", closeScheduleEditModal)
+  );
+
+  function openScheduleEditModal(sched) {
+    scheduleEditId = sched.id;
+    // textContent, not innerHTML — no escaping needed, and nothing here
+    // can be interpreted as markup even if a host/user contains "<" etc.
+    scheduleEditLabel.textContent = sched.label + (sched.kind === "batch" ? " (bulk batch)" : "");
+    scheduleEditInterval.value = sched.interval_hours;
+    scheduleEditPassword1.value = "";
+    scheduleEditPassword2.value = "";
+    scheduleEditError.hidden = true;
+    const isBatch = sched.kind === "batch";
+    scheduleEditPasswordFields.hidden = isBatch;
+    scheduleEditBatchHint.hidden = !isBatch;
+    scheduleEditSaveBtn.disabled = false;
+    scheduleEditSaveBtn.textContent = "Save";
+    scheduleEditModal.hidden = false;
+  }
+
+  scheduleEditSaveBtn.addEventListener("click", () => {
+    const interval = parseFloat(scheduleEditInterval.value);
+    if (!interval || interval < 0.25) {
+      scheduleEditError.hidden = false;
+      scheduleEditError.className = "conn-test-status fail";
+      scheduleEditError.textContent = "Minimum interval is 0.25h (15 minutes).";
+      return;
+    }
+    scheduleEditSaveBtn.disabled = true;
+    scheduleEditSaveBtn.textContent = "Saving…";
+    fetch(`/api/schedules/${scheduleEditId}/edit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...CSRF_HEADERS },
+      body: JSON.stringify({
+        interval_hours: interval,
+        password1: scheduleEditPassword1.value,
+        password2: scheduleEditPassword2.value,
+      }),
+    })
+      .then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error || "Failed to save.");
+        closeScheduleEditModal();
+        loadSchedules();
       })
-        .then(async (r) => {
-          const body = await r.json();
-          if (!r.ok) throw new Error(body.error || "Failed to save.");
-          loadSchedules();
-        })
-        .catch((err) => {
-          errorEl.hidden = false;
-          errorEl.className = "conn-test-status fail";
-          errorEl.textContent = err.message;
-          saveBtn.disabled = false;
-          saveBtn.textContent = "Save";
-        });
-    });
-  }
+      .catch((err) => {
+        scheduleEditError.hidden = false;
+        scheduleEditError.className = "conn-test-status fail";
+        scheduleEditError.textContent = err.message;
+        scheduleEditSaveBtn.disabled = false;
+        scheduleEditSaveBtn.textContent = "Save";
+      });
+  });
 
   function loadSchedules() {
     return fetch("/api/schedules")
