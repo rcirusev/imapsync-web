@@ -30,6 +30,9 @@ import queue
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+
+MAX_BATCH_CONCURRENCY = 25
 
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
@@ -349,18 +352,29 @@ def stream(job_id):
 # Bulk migration (CSV)
 # ---------------------------------------------------------------------------
 
-def _run_batch_thread(batch_id, rows, schedule_id=None):
-    total = len(rows)
-    success = errors = 0
-    stopped_early = False
+def _run_batch_thread(batch_id, rows, schedule_id=None, max_concurrent=1):
+    """
+    Runs every row of a bulk batch through a bounded worker pool sized
+    max_concurrent instead of strictly one-at-a-time, so a large CSV can use
+    spare capacity on the source/destination servers instead of leaving a
+    job idle while the previous one finishes. max_concurrent=1 (the
+    default) reproduces the old fully-sequential behavior exactly.
 
-    for index, row in enumerate(rows, start=1):
+    Progress bookkeeping (counts, DB updates, row_start/row_done broadcasts)
+    happens inside each worker, guarded by progress_lock since multiple
+    rows can finish at the same time now.
+    """
+    total = len(rows)
+    progress_lock = threading.Lock()
+    counts = {"completed": 0, "success": 0, "errors": 0}
+    stopped_event = threading.Event()
+
+    def run_row(index, row):
         with BATCH_CANCEL_LOCK:
             if batch_id in BATCH_CANCEL_REQUESTS:
-                BATCH_CANCEL_REQUESTS.discard(batch_id)
-                stopped_early = True
-        if stopped_early:
-            break  # a Stop request landed while the previous row was running; skip the rest
+                stopped_event.set()
+        if stopped_event.is_set():
+            return  # a Stop request landed before this row got its turn — skip it
 
         job = _new_job_dict(row, job_id=row.get("_job_id"))
         db.create_job(DB_PATH, job, batch_id=batch_id, schedule_id=schedule_id)
@@ -374,15 +388,20 @@ def _run_batch_thread(batch_id, rows, schedule_id=None):
         })
 
         status = _execute_job(job, row["password1"], row["password2"])
-        if status == "success":
-            success += 1
-        else:
-            errors += 1
-        # Persisted after every row (not just at the end) so the batch's
-        # progress survives a page reload, a dropped connection, or even
-        # this process dying partway through — History always shows how
-        # far a bulk run actually got, not just whether it finished.
-        db.update_batch_progress(DB_PATH, batch_id, index, success, errors)
+
+        with progress_lock:
+            counts["completed"] += 1
+            if status == "success":
+                counts["success"] += 1
+            else:
+                counts["errors"] += 1
+            # Persisted after every row (not just at the end) so the batch's
+            # progress survives a page reload, a dropped connection, or even
+            # this process dying partway through — History always shows how
+            # far a bulk run actually got, not just whether it finished.
+            db.update_batch_progress(
+                DB_PATH, batch_id, counts["completed"], counts["success"], counts["errors"]
+            )
 
         finished = db.get_job(DB_PATH, job["id"])
         _broadcast(BATCHES, BATCHES_LOCK, batch_id, "row_done", {
@@ -393,13 +412,22 @@ def _run_batch_thread(batch_id, rows, schedule_id=None):
             "errors": finished["errors"], "duration_s": finished["duration_s"],
         })
 
+    with ThreadPoolExecutor(max_workers=max(1, max_concurrent)) as pool:
+        futures = [pool.submit(run_row, index, row) for index, row in enumerate(rows, start=1)]
+        for future in futures:
+            future.result()  # propagate a worker crash instead of swallowing it
+
+    with BATCH_CANCEL_LOCK:
+        BATCH_CANCEL_REQUESTS.discard(batch_id)
+    stopped_early = stopped_event.is_set()
+
     if stopped_early:
         db.stop_batch(DB_PATH, batch_id, time.time())
     else:
         db.finish_batch(DB_PATH, batch_id, time.time())
 
     _broadcast(BATCHES, BATCHES_LOCK, batch_id, "batch_done", {
-        "total": total, "success": success, "error": errors, "stopped": stopped_early,
+        "total": total, "success": counts["success"], "error": counts["errors"], "stopped": stopped_early,
     })
     _close(BATCHES, BATCHES_LOCK, batch_id)
 
@@ -431,6 +459,12 @@ def bulk_start():
 
     name = (request.form.get("name") or "").strip() or None
 
+    try:
+        max_concurrent = int(request.form.get("max_concurrent") or 1)
+    except ValueError:
+        max_concurrent = 1
+    max_concurrent = min(max(max_concurrent, 1), MAX_BATCH_CONCURRENCY)
+
     # Assigned up front (rather than lazily inside _run_batch_thread) so
     # scheduled-delta-sync credentials, stored synchronously below, are
     # keyed to the exact same ids each row's job will use once the
@@ -439,7 +473,7 @@ def bulk_start():
         row["_job_id"] = str(uuid.uuid4())
 
     batch_id = str(uuid.uuid4())
-    db.create_batch(DB_PATH, batch_id, len(rows), time.time(), name=name)
+    db.create_batch(DB_PATH, batch_id, len(rows), time.time(), name=name, max_concurrent=max_concurrent)
     with BATCHES_LOCK:
         BATCHES[batch_id] = {"lines": [], "subscribers": [], "done": False}
 
@@ -450,7 +484,9 @@ def bulk_start():
             pairs = [(row["_job_id"], row["password1"], row["password2"]) for row in rows]
             _enable_delta_sync("batch", batch_id, interval_hours, pairs)
 
-    threading.Thread(target=_run_batch_thread, args=(batch_id, rows), daemon=True).start()
+    threading.Thread(
+        target=_run_batch_thread, args=(batch_id, rows), kwargs={"max_concurrent": max_concurrent}, daemon=True
+    ).start()
 
     return jsonify({"batch_id": batch_id, "total": len(rows), "row_errors": row_errors})
 
@@ -545,6 +581,7 @@ def _run_scheduled_batch(sched):
 
     original_batch = db.get_batch(DB_PATH, sched["ref_id"]) or {}
     base_name = original_batch.get("name") or f"Batch {sched['ref_id'][:8]}"
+    max_concurrent = min(max(int(original_batch.get("max_concurrent") or 1), 1), MAX_BATCH_CONCURRENCY)
 
     for row in rows:
         row["_job_id"] = str(uuid.uuid4())
@@ -552,11 +589,11 @@ def _run_scheduled_batch(sched):
     batch_id = str(uuid.uuid4())
     db.create_batch(
         DB_PATH, batch_id, len(rows), time.time(),
-        name=f"{base_name} (auto delta sync)", schedule_id=sched["id"],
+        name=f"{base_name} (auto delta sync)", schedule_id=sched["id"], max_concurrent=max_concurrent,
     )
     with BATCHES_LOCK:
         BATCHES[batch_id] = {"lines": [], "subscribers": [], "done": False}
-    _run_batch_thread(batch_id, rows, schedule_id=sched["id"])
+    _run_batch_thread(batch_id, rows, schedule_id=sched["id"], max_concurrent=max_concurrent)
 
 
 def _run_schedule(sched):

@@ -226,9 +226,11 @@
       <p class="hint-text">
         Each row is a fully independent migration (its own source/destination
         accounts and options) — handy for migrating many mailboxes onto a new
-        server at once. Rows run <strong>one at a time</strong>, in file
-        order, so the source/destination servers aren't hit with many
-        connections simultaneously.
+        server at once. By default rows run <strong>one at a time</strong>;
+        raise "Max concurrent migrations" below to run several rows in
+        parallel and use spare capacity on the source/destination servers —
+        test with a small batch first to see how many connections those
+        servers tolerate before scaling up.
       </p>
       <p class="hint-text">
         <a id="download-template" href="/api/bulk/template">Download the CSV template</a>
@@ -240,6 +242,15 @@
         <span>Batch name <span class="field-hint-inline">(optional — shown in History, like a named migration batch)</span></span>
         <input type="text" id="bulk-batch-name" placeholder="e.g. Finance dept — March 2026">
       </label>
+      <label class="field field-small">
+        <span>Max concurrent migrations</span>
+        <input type="number" id="bulk-max-concurrent" min="1" max="25" step="1" value="1">
+      </label>
+      <p class="field-hint">
+        How many rows to run at once instead of strictly one after another.
+        Keep this at 1 unless you've confirmed the source/destination
+        servers can handle multiple simultaneous IMAP connections.
+      </p>
       <label class="field-checkbox">
         <input type="checkbox" id="bulk-schedule-enabled">
         <span>Automatically re-run this whole batch to catch new mail, until I stop it</span>
@@ -270,13 +281,32 @@
 
     <section class="card console-card" id="bulk-progress-card" hidden>
       <div class="console-header">
-        <h2 id="bulk-progress-label">Migration console</h2>
+        <h2 id="bulk-progress-label">Migration progress</h2>
         <div class="console-header-actions">
           <button type="button" id="bulk-stop-btn" class="btn btn-ghost btn-small">Stop batch</button>
           <div id="bulk-progress-indeterminate" class="progress-indeterminate" hidden></div>
         </div>
       </div>
-      <pre id="bulk-console" class="console"></pre>
+      <div class="table-wrap">
+      <table class="history-table">
+        <colgroup>
+          <col style="width: 70px">
+          <col style="width: 260px">
+          <col style="width: 260px">
+          <col style="width: 140px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="nowrap">#</th>
+            <th>Source</th>
+            <th>Destination</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="bulk-running-body"></tbody>
+      </table>
+      </div>
+      <p class="field-hint" id="bulk-running-empty">Waiting for the first row to start…</p>
     </section>
 
     <section class="card" id="bulk-results-card" hidden>

@@ -43,15 +43,16 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs (created_at DESC);
 
 CREATE TABLE IF NOT EXISTS batches (
-    id          TEXT PRIMARY KEY,
-    created_at  REAL NOT NULL,
-    total       INTEGER NOT NULL,
-    completed   INTEGER NOT NULL DEFAULT 0,
-    success     INTEGER NOT NULL DEFAULT 0,
-    error       INTEGER NOT NULL DEFAULT 0,
-    status      TEXT NOT NULL,   -- running | done | interrupted | stopped
-    finished_at REAL,
-    name        TEXT
+    id             TEXT PRIMARY KEY,
+    created_at     REAL NOT NULL,
+    total          INTEGER NOT NULL,
+    completed      INTEGER NOT NULL DEFAULT 0,
+    success        INTEGER NOT NULL DEFAULT 0,
+    error          INTEGER NOT NULL DEFAULT 0,
+    status         TEXT NOT NULL,   -- running | done | interrupted | stopped
+    finished_at    REAL,
+    name           TEXT,
+    max_concurrent INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_batches_created_at ON batches (created_at DESC);
 
@@ -137,6 +138,14 @@ def init_db(db_path):
             conn.commit()
         except sqlite3.OperationalError:
             pass  # column already exists
+    # ...and for max_concurrent (bounded worker-pool size for bulk batches —
+    # pre-existing installs default every row here to 1, i.e. today's
+    # strictly-sequential behavior, since that's what already ran).
+    try:
+        conn.execute("ALTER TABLE batches ADD COLUMN max_concurrent INTEGER NOT NULL DEFAULT 1")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
 
 
 def create_job(db_path, job, batch_id=None, schedule_id=None):
@@ -181,12 +190,12 @@ def mark_orphaned_running_as_interrupted(db_path):
     conn.commit()
 
 
-def create_batch(db_path, batch_id, total, created_at, name=None, schedule_id=None):
+def create_batch(db_path, batch_id, total, created_at, name=None, schedule_id=None, max_concurrent=1):
     conn = get_conn(db_path)
     conn.execute(
-        """INSERT INTO batches (id, created_at, total, completed, success, error, status, name, schedule_id)
-           VALUES (?, ?, ?, 0, 0, 0, 'running', ?, ?)""",
-        (batch_id, created_at, total, name or None, schedule_id),
+        """INSERT INTO batches (id, created_at, total, completed, success, error, status, name, schedule_id, max_concurrent)
+           VALUES (?, ?, ?, 0, 0, 0, 'running', ?, ?, ?)""",
+        (batch_id, created_at, total, name or None, schedule_id, max_concurrent),
     )
     conn.commit()
 

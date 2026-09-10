@@ -341,12 +341,14 @@
   const bulkRowErrors = document.getElementById("bulk-row-errors");
   const bulkProgressCard = document.getElementById("bulk-progress-card");
   const bulkProgressLabel = document.getElementById("bulk-progress-label");
-  const bulkConsole = document.getElementById("bulk-console");
+  const bulkRunningBody = document.getElementById("bulk-running-body");
+  const bulkRunningEmpty = document.getElementById("bulk-running-empty");
   const bulkResultsCard = document.getElementById("bulk-results-card");
   const bulkResultsBody = document.getElementById("bulk-results-body");
   const bulkSummary = document.getElementById("bulk-summary");
   const bulkProgressIndeterminate = document.getElementById("bulk-progress-indeterminate");
   const bulkBatchNameInput = document.getElementById("bulk-batch-name");
+  const bulkMaxConcurrentInput = document.getElementById("bulk-max-concurrent");
   const bulkStopBtn = document.getElementById("bulk-stop-btn");
   const bulkScheduleEnabledCheckbox = document.getElementById("bulk-schedule-enabled");
   const bulkScheduleIntervalRow = document.getElementById("bulk-schedule-interval-row");
@@ -358,9 +360,34 @@
     bulkScheduleHint.hidden = !bulkScheduleEnabledCheckbox.checked;
   });
 
-  let bulkRowSource = null;
+  // Rows currently in flight, keyed by job_id — several can be running at
+  // once when "Max concurrent migrations" is above 1, so unlike the old
+  // single-row console this is a small live table instead of one log tail.
+  // Each row's own live log is still just an EventSource away via the
+  // existing "View live log" -> openLogModal(jobId), same as History.
+  const bulkRunningRows = new Map();
+  let bulkDoneCount = 0;
   let bulkReconnectAttempts = 0;
   let currentBulkBatchId = null;
+
+  function renderBulkRunningRow(row) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="nowrap">${row.index}/${row.total}</td>
+      <td>${accountCell(row.user1, row.host1)}</td>
+      <td>${accountCell(row.user2, row.host2)}</td>
+      <td class="nowrap"><span class="status-badge status-running">Running</span>
+        <button class="btn btn-ghost btn-small" data-job="${row.job_id}">View live log</button></td>
+    `;
+    tr.querySelector("button[data-job]").addEventListener("click", () => openLogModal(row.job_id));
+    return tr;
+  }
+
+  function updateBulkProgressLabel(total) {
+    const running = bulkRunningRows.size;
+    bulkProgressLabel.textContent =
+      `${bulkDoneCount}/${total} done` + (running ? `, ${running} running now` : "");
+  }
 
   function requestStopBatch(batchId, onSettled) {
     fetch(`/api/bulk/${batchId}/stop`, { method: "POST", headers: CSRF_HEADERS })
@@ -379,16 +406,9 @@
         bulkStopBtn.textContent = "Stop batch";
       }
       // On success, leave the button disabled — the batch_done event
-      // (once the in-flight row finishes) will reset the whole console.
+      // (once every in-flight row finishes) will reset the whole view.
     });
   });
-
-  function bulkAppendLine(text) {
-    const div = document.createElement("div");
-    div.textContent = text;
-    bulkConsole.appendChild(div);
-    bulkConsole.scrollTop = bulkConsole.scrollHeight;
-  }
 
   bulkStartBtn.addEventListener("click", () => {
     const file = bulkFile.files[0];
@@ -403,7 +423,11 @@
     bulkResultsBody.innerHTML = "";
     bulkProgressCard.hidden = false;
     bulkProgressIndeterminate.hidden = false;
-    bulkConsole.textContent = "";
+    bulkRunningRows.clear();
+    bulkRunningBody.innerHTML = "";
+    bulkRunningEmpty.hidden = false;
+    bulkRunningEmpty.textContent = "Waiting for the first row to start…";
+    bulkDoneCount = 0;
     bulkProgressLabel.textContent = "Uploading…";
     bulkStartBtn.disabled = true;
     bulkStartBtn.textContent = "Running…";
@@ -413,6 +437,7 @@
     const formData = new FormData();
     formData.append("file", file);
     formData.append("name", bulkBatchNameInput.value.trim());
+    formData.append("max_concurrent", bulkMaxConcurrentInput.value || "1");
     formData.append("schedule_enabled", bulkScheduleEnabledCheckbox.checked ? "true" : "false");
     formData.append("schedule_interval_hours", bulkScheduleIntervalInput.value || "0");
 
@@ -431,7 +456,8 @@
       })
       .catch((err) => {
         bulkProgressLabel.textContent = "Failed to start";
-        bulkAppendLine("ERROR: " + err.message);
+        bulkRunningEmpty.hidden = false;
+        bulkRunningEmpty.textContent = "ERROR: " + err.message;
         bulkStartBtn.disabled = false;
         bulkStartBtn.textContent = "Start bulk migration";
       });
@@ -445,25 +471,33 @@
       // The server replays every buffered row_start/row_done event on
       // reconnect — clear what's shown first so rows aren't duplicated.
       bulkResultsBody.innerHTML = "";
-      bulkConsole.textContent = "";
+      bulkRunningRows.clear();
+      bulkRunningBody.innerHTML = "";
+      bulkDoneCount = 0;
     }
 
     source.addEventListener("row_start", (e) => {
       bulkReconnectAttempts = 0;
       const row = JSON.parse(e.data);
-      bulkProgressLabel.textContent =
-        `Row ${row.index}/${row.total} — ${row.user1}@${row.host1} → ${row.user2}@${row.host2}`;
-      bulkConsole.textContent = "";
-      if (bulkRowSource) bulkRowSource.close();
-      bulkRowSource = new EventSource(`/api/stream/${row.job_id}`);
-      bulkRowSource.addEventListener("log", (ev) => {
-        bulkAppendLine(JSON.parse(ev.data).line);
-      });
+      bulkRunningEmpty.hidden = true;
+      const tr = renderBulkRunningRow(row);
+      bulkRunningRows.set(row.job_id, tr);
+      bulkRunningBody.appendChild(tr);
+      updateBulkProgressLabel(row.total);
     });
 
     source.addEventListener("row_done", (e) => {
       bulkReconnectAttempts = 0;
       const row = JSON.parse(e.data);
+      const runningTr = bulkRunningRows.get(row.job_id);
+      if (runningTr) {
+        runningTr.remove();
+        bulkRunningRows.delete(row.job_id);
+      }
+      bulkDoneCount += 1;
+      bulkRunningEmpty.hidden = bulkRunningRows.size > 0;
+      updateBulkProgressLabel(row.total);
+
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td class="nowrap">${row.index}/${row.total}</td>
@@ -482,7 +516,9 @@
     source.addEventListener("batch_done", (e) => {
       const summary = JSON.parse(e.data);
       source.close();
-      if (bulkRowSource) { bulkRowSource.close(); bulkRowSource = null; }
+      bulkRunningRows.clear();
+      bulkRunningBody.innerHTML = "";
+      bulkRunningEmpty.hidden = false;
       bulkProgressIndeterminate.hidden = true;
       bulkProgressLabel.textContent = summary.stopped
         ? "Bulk migration stopped"
@@ -503,7 +539,6 @@
 
     source.onerror = () => {
       source.close();
-      if (bulkRowSource) { bulkRowSource.close(); bulkRowSource = null; }
       bulkReconnectAttempts += 1;
 
       // A brief drop shouldn't lose the live view — retry for a while.
