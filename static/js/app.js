@@ -121,6 +121,19 @@
     }[ch]));
   }
 
+  // Renders "user@host" as two lines — the account name on top, the host
+  // underneath in smaller/muted text — instead of one long "user@host"
+  // string, so a long hostname doesn't dominate the row. `badgeHtml`, if
+  // given, is appended after the account name (e.g. the "master" tag).
+  function accountCell(user, host, badgeHtml) {
+    return (
+      '<div class="account-cell">' +
+      `<span class="account-name">${escapeHtml(user)}</span>${badgeHtml || ""}` +
+      `<span class="account-host">@${escapeHtml(host)}</span>` +
+      "</div>"
+    );
+  }
+
   // Sent on every state-changing request (anything but a plain GET).
   // It carries no secret value — its only purpose is that a cross-site
   // <form> submit or a "simple" cross-origin fetch/XHR cannot attach a
@@ -454,8 +467,8 @@
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td class="nowrap">${row.index}/${row.total}</td>
-        <td>${escapeHtml(row.user1)}@${escapeHtml(row.host1)}</td>
-        <td>${escapeHtml(row.user2)}@${escapeHtml(row.host2)}</td>
+        <td>${accountCell(row.user1, row.host1)}</td>
+        <td>${accountCell(row.user2, row.host2)}</td>
         <td class="nowrap"><span class="status-badge status-${row.status}">${STATUS_LABEL[row.status] || row.status}</span></td>
         <td class="nowrap">${fmtOrDash(row.messages)}</td>
         <td class="nowrap">${fmtOrDash(row.errors)}</td>
@@ -610,8 +623,12 @@
   function renderScheduleRow(sched) {
     const tr = document.createElement("tr");
     tr._sched = sched;
+    const accountsCol = sched.kind === "job"
+      ? `<div class="account-pair">${accountCell(sched.user1, sched.host1)}` +
+        `<span class="account-arrow">\u2192</span>${accountCell(sched.user2, sched.host2)}</div>`
+      : `${escapeHtml(sched.label)} <span class="bulk-tag">bulk</span>`;
     tr.innerHTML = `
-      <td>${escapeHtml(sched.label)}${sched.kind === "batch" ? ' <span class="bulk-tag">bulk</span>' : ""}</td>
+      <td>${accountsCol}</td>
       <td class="nowrap">${sched.interval_hours}h</td>
       <td class="nowrap">${fmtRelative(sched.last_run_at)}</td>
       <td class="nowrap">${fmtRelative(sched.next_run_at)}</td>
@@ -839,8 +856,8 @@
         : new Date(job.created_at * 1000).toLocaleString();
       tr.innerHTML = `
         <td class="nowrap">${started}${job.batch_id ? ' <span class="bulk-tag">bulk</span>' : ""}${job.schedule_id ? ' <span class="bulk-tag">auto</span>' : ""}</td>
-        <td>${escapeHtml(job.user1)}@${escapeHtml(job.host1)}${job.authuser1 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser1) + '">master</span>' : ""}</td>
-        <td>${escapeHtml(job.user2)}@${escapeHtml(job.host2)}${job.authuser2 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser2) + '">master</span>' : ""}</td>
+        <td>${accountCell(job.user1, job.host1, job.authuser1 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser1) + '">master</span>' : "")}</td>
+        <td>${accountCell(job.user2, job.host2, job.authuser2 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser2) + '">master</span>' : "")}</td>
         <td class="nowrap"><span class="status-badge status-${job.status}">${STATUS_LABEL[job.status] || job.status}</span></td>
         <td class="nowrap">${fmtOrDash(job.messages)}</td>
         <td class="nowrap">${fmtOrDash(job.errors)}</td>
@@ -1137,8 +1154,8 @@
           const canResume = job.status === "error" || job.status === "interrupted";
           const tr = document.createElement("tr");
           tr.innerHTML = `
-            <td>${escapeHtml(job.user1)}@${escapeHtml(job.host1)}</td>
-            <td>${escapeHtml(job.user2)}@${escapeHtml(job.host2)}</td>
+            <td>${accountCell(job.user1, job.host1)}</td>
+            <td>${accountCell(job.user2, job.host2)}</td>
             <td class="nowrap"><span class="status-badge status-${job.status}">${STATUS_LABEL[job.status] || job.status}</span></td>
             <td class="nowrap">${fmtOrDash(job.messages)}</td>
             <td class="nowrap">${fmtOrDash(job.errors)}</td>

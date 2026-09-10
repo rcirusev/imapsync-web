@@ -675,6 +675,36 @@ legend {
   border-radius: 999px;
 }
 
+/* Account "user@host" shown as two lines — the account name prominent,
+   the host underneath in smaller/muted text — so long hostnames don't
+   dominate the row while still being visible (not hidden). */
+.account-cell {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
+  gap: 1px;
+}
+
+.account-name {
+  color: var(--text-primary);
+}
+
+.account-host {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.account-pair {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-arrow {
+  color: var(--text-muted);
+  flex: none;
+}
+
 /* ---------- Modal ---------- */
 
 .modal {

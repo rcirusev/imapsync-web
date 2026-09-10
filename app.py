@@ -587,7 +587,14 @@ def list_schedules():
         info = dict(sched)
         if sched["kind"] == "job":
             job = db.get_job(DB_PATH, sched["ref_id"])
-            info["label"] = f"{job['user1']}@{job['host1']} → {job['user2']}@{job['host2']}" if job else "(job deleted)"
+            if job:
+                info["label"] = f"{job['user1']}@{job['host1']} → {job['user2']}@{job['host2']}"
+                # Raw fields too, so the UI can style the account and host
+                # differently instead of re-parsing the combined label.
+                info["user1"], info["host1"] = job["user1"], job["host1"]
+                info["user2"], info["host2"] = job["user2"], job["host2"]
+            else:
+                info["label"] = "(job deleted)"
         else:
             batch = db.get_batch(DB_PATH, sched["ref_id"])
             info["label"] = (batch.get("name") if batch else None) or f"Batch {sched['ref_id'][:8]}"
