@@ -889,8 +889,15 @@
       const started = job.started_at
         ? new Date(job.started_at * 1000).toLocaleString()
         : new Date(job.created_at * 1000).toLocaleString();
+      const startedTags = [
+        job.batch_id ? '<span class="bulk-tag">bulk</span>' : "",
+        job.schedule_id ? '<span class="bulk-tag">auto</span>' : "",
+      ].filter(Boolean).join("");
       tr.innerHTML = `
-        <td class="nowrap">${started}${job.batch_id ? ' <span class="bulk-tag">bulk</span>' : ""}${job.schedule_id ? ' <span class="bulk-tag">auto</span>' : ""}</td>
+        <td><div class="started-cell">
+          <span class="nowrap">${started}</span>
+          ${startedTags ? `<div class="started-tags">${startedTags}</div>` : ""}
+        </div></td>
         <td>${accountCell(job.user1, job.host1, job.authuser1 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser1) + '">master</span>' : "")}</td>
         <td>${accountCell(job.user2, job.host2, job.authuser2 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser2) + '">master</span>' : "")}</td>
         <td class="nowrap"><span class="status-badge status-${job.status}">${STATUS_LABEL[job.status] || job.status}</span></td>

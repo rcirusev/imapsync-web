@@ -685,6 +685,22 @@ legend {
   border-radius: 999px;
 }
 
+/* Started-at timestamp + its bulk/auto tags, stacked instead of crammed
+   onto one line — the "Started" column is narrow enough (see the history
+   table's <colgroup>) that a tag appended inline after a long localized
+   date/time string had nowhere to go but an awkward mid-word wrap. */
+.started-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.started-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
 /* Account "user@host" shown as two lines — the account name prominent,
    the host underneath in smaller/muted text — so long hostnames don't
    dominate the row while still being visible (not hidden). */
