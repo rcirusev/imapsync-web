@@ -714,6 +714,16 @@ legend {
 
 .modal-panel-wide { width: min(1100px, 95vw); }
 
+.modal-panel-log {
+  width: min(1400px, 96vw);
+  max-height: 90vh;
+}
+
+.modal-panel-log .console {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .modal-table-wrap {
   overflow: auto;
   flex: 1;
