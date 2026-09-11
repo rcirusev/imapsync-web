@@ -88,4 +88,10 @@ EXPOSE 8000
 
 USER imapsyncweb
 
-CMD ["gunicorn", "-b", "0.0.0.0:8000", "--worker-class", "gthread", "--workers", "2", "--threads", "8", "--timeout", "0", "app:app"]
+# --workers 1 is deliberate: this app keeps live job/batch state (SSE
+# streams, Stop requests) in plain in-process Python dicts, so a second
+# worker PROCESS would have its own separate copy and silently miss
+# control requests gunicorn happens to route to it instead of the process
+# actually running a given job. --threads 8 already gives real concurrency
+# (many simultaneous requests/SSE connections) without that split.
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "--worker-class", "gthread", "--workers", "1", "--threads", "8", "--timeout", "0", "app:app"]

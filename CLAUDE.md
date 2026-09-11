@@ -67,6 +67,21 @@ picked up on refresh without a build step.
 
 ### Job execution model
 
+**This app must run as a single gunicorn worker PROCESS** (`--workers 1`,
+concurrency comes entirely from `--threads 8` instead — both `install.sh`
+and the `Dockerfile` are set up this way; don't "helpfully" bump `--workers`
+back up). `ACTIVE`, `BATCHES`, and `BATCH_CANCEL_REQUESTS` below are plain
+in-process Python dicts/sets — with more than one worker process, each
+would have its own separate copy, and gunicorn does distribute requests
+across workers (confirmed empirically: 2 workers under light sequential
+load split roughly 85/15, not pinned to one). A live SSE stream or a Stop
+click landing on a *different* worker process than the one actually
+running that job/batch would silently see/do nothing — `/api/stream`
+would fall back to "already done" replay-from-disk, and Stop would set the
+cancel flag in a process nobody's checking. Threads within one process
+share memory, so this only works correctly as long as there is exactly one
+worker process.
+
 A migration (single or one bulk-CSV row) becomes a **job dict**
 (`_new_job_dict`) with a generated `id`. `_execute_job` is the single
 codepath that runs one job to completion, for both single migrations and
@@ -95,18 +110,20 @@ registries don't survive a restart, so a "Running"/"Queued" row at startup
 is always stale. **This whole sweep (plus `_auto_resume_interrupted_batches`
 below) is gated by `WON_STARTUP_RACE`** — an advisory, non-blocking
 `fcntl.flock` on `<data dir>/.startup.lock` acquired at import time — so
-that only ONE gunicorn worker process ever runs it per boot, not each of
-`install.sh`/the Dockerfile's `--workers 2` independently. Without this, two
-workers booting at once could both see the same interrupted batch and each
-launch their own resume of it, or one worker's brand-new resumed batch
-(rows briefly `queued` the instant they're created) could get caught by a
-*sibling* worker's own orphan sweep — which has no way to tell "genuinely
-stale from before this boot" apart from "a sibling worker just created
-this" — cascading into repeated `(auto-resumed) (auto-resumed)` batches.
-`_scheduler_loop`'s 60s poll deliberately runs unconditionally in every
-worker instead, since it's already safe to run concurrently (see its own
-CAS-based `db.claim_due_schedules`, below) — don't apply the same
-`WON_STARTUP_RACE` gating there.
+that only ONE worker process ever runs it per boot. With `--workers 1`
+(above) there is only ever one worker anyway, so this is now defense in
+depth rather than the only thing standing between correctness and a
+cascade — kept because it's cheap insurance if `--workers` is ever
+misconfigured above 1: two workers booting at once could both see the same
+interrupted batch and each launch their own resume of it, or one worker's
+brand-new resumed batch (rows briefly `queued` the instant they're created)
+could get caught by a *sibling* worker's own orphan sweep — which has no
+way to tell "genuinely stale from before this boot" apart from "a sibling
+worker just created this" — cascading into repeated `(auto-resumed)
+(auto-resumed)` batches. `_scheduler_loop`'s 60s poll deliberately runs
+unconditionally instead, since it's already safe to run concurrently (see
+its own CAS-based `db.claim_due_schedules`, below) even if `--workers` were
+misconfigured — don't apply the same `WON_STARTUP_RACE` gating there.
 
 Recovering an interrupted batch's rows relies on
 `imapsync` itself being incremental (re-running the same host/user/options

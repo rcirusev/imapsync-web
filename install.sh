@@ -200,7 +200,13 @@ Group=${SERVICE_USER}
 WorkingDirectory=${INSTALL_DIR}
 Environment=IMAPSYNC_WEB_DATA_DIR=${INSTALL_DIR}/data
 $( [ -n "${IMAPSYNC_WEB_USERNAME}" ] && [ -n "${IMAPSYNC_WEB_PASSWORD}" ] && printf 'Environment=IMAPSYNC_WEB_USERNAME=%s\nEnvironment=IMAPSYNC_WEB_PASSWORD=%s' "${IMAPSYNC_WEB_USERNAME}" "${IMAPSYNC_WEB_PASSWORD}" )
-ExecStart=${INSTALL_DIR}/.venv/bin/gunicorn -b 0.0.0.0:${PORT} --worker-class gthread --workers 2 --threads 8 --timeout 0 app:app
+# --workers 1 is deliberate, not a typo: this app keeps live job/batch
+# state (SSE streams, Stop requests) in plain in-process Python dicts, so
+# a second worker PROCESS would have its own separate copy and silently
+# miss control requests routed to it instead of the process actually
+# running a given job. --threads 8 already gives it real concurrency
+# (many simultaneous requests/SSE connections) without that split.
+ExecStart=${INSTALL_DIR}/.venv/bin/gunicorn -b 0.0.0.0:${PORT} --worker-class gthread --workers 1 --threads 8 --timeout 0 app:app
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

@@ -159,6 +159,14 @@ reachable by people who should have access.
   `SERVER_SOFTWARE` from the subprocess's environment before launching
   imapsync, so it always runs in plain "Standard" context regardless of
   which WSGI server hosts this app.
+- **Runs as a single gunicorn worker process, on purpose.** Both
+  `install.sh` and the Dockerfile use `--workers 1 --threads 8` — live
+  progress (SSE), Stop, and auto-resume all rely on plain in-memory state
+  that only one process shares. Raising `--workers` above 1 would split
+  that state across processes that don't talk to each other, so a Stop
+  click or live log view can silently land on the "wrong" process and do
+  nothing. `--threads 8` already gives real concurrency (many simultaneous
+  requests/SSE connections) within that one process, without that split.
 
 ## Testing a connection before you migrate
 
