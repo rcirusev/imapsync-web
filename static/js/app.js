@@ -913,7 +913,7 @@
         <td class="nowrap">${fmtDuration(job.duration_s)}</td>
         <td><div class="history-actions">
           <button class="btn btn-ghost btn-small" data-job="${job.id}">View log</button>
-          ${canResume ? `<button class="btn btn-ghost btn-small" data-resume="${job.id}">Resume</button>` : ""}
+          ${canResume ? renderResumeButton(job) : ""}
         </div></td>
       `;
       tr._job = job;
@@ -925,6 +925,41 @@
     historyBody.querySelectorAll("button[data-resume]").forEach((btn) => {
       btn.addEventListener("click", () => resumeJob(btn.closest("tr")._job));
     });
+    historyBody.querySelectorAll("button[data-resume-now]").forEach((btn) => {
+      btn.addEventListener("click", () => resumeJobNow(btn.dataset.resumeNow, btn));
+    });
+  }
+
+  // A job with a still-stored "auto-resume" password (see
+  // has_stored_password on /api/jobs) can go straight back out with one
+  // click, reusing it — same as a batch's "Retry rows" does per-row.
+  // Without one, fall back to the original behavior: jump to New
+  // migration with everything but the password(s) pre-filled.
+  function renderResumeButton(job) {
+    return job.has_stored_password
+      ? `<button class="btn btn-ghost btn-small" data-resume-now="${job.id}" title="Reuses the saved password — no retyping">Resume now</button>`
+      : `<button class="btn btn-ghost btn-small" data-resume="${job.id}">Resume</button>`;
+  }
+
+  function resumeJobNow(jobId, btn) {
+    btn.disabled = true;
+    btn.textContent = "Resuming…";
+    fetch(`/api/jobs/${jobId}/retry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...CSRF_HEADERS },
+      body: JSON.stringify({}),
+    })
+      .then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error || "Failed to resume.");
+        loadHistory();
+        loadBatches();
+      })
+      .catch((err) => {
+        alert(err.message);
+        btn.disabled = false;
+        btn.textContent = "Resume now";
+      });
   }
 
   batchesSearchInput.addEventListener("input", renderBatches);
@@ -1211,7 +1246,7 @@
             <td class="nowrap">${fmtDuration(job.duration_s)}</td>
             <td><div class="history-actions">
               <button class="btn btn-ghost btn-small" data-job="${job.id}">View log</button>
-              ${canResume ? `<button class="btn btn-ghost btn-small" data-resume="${job.id}">Resume</button>` : ""}
+              ${canResume ? renderResumeButton(job) : ""}
             </div></td>
           `;
           tr._job = job;
@@ -1224,6 +1259,29 @@
           btn.addEventListener("click", () => {
             batchModal.hidden = true;
             resumeJob(btn.closest("tr")._job);
+          });
+        });
+        batchModalBody.querySelectorAll("button[data-resume-now]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            btn.disabled = true;
+            btn.textContent = "Resuming…";
+            fetch(`/api/jobs/${btn.dataset.resumeNow}/retry`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...CSRF_HEADERS },
+              body: JSON.stringify({}),
+            })
+              .then(async (r) => {
+                const body = await r.json();
+                if (!r.ok) throw new Error(body.error || "Failed to resume.");
+                loadHistory();
+                loadBatches();
+                openBatchModal(batch); // refresh this modal's rows in place
+              })
+              .catch((err) => {
+                alert(err.message);
+                btn.disabled = false;
+                btn.textContent = "Resume now";
+              });
           });
         });
       })

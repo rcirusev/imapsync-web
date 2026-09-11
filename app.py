@@ -438,6 +438,59 @@ def start():
     return jsonify({"job_id": job["id"]})
 
 
+@app.route("/api/jobs/<job_id>/retry", methods=["POST"])
+def job_retry(job_id):
+    """
+    Re-runs a single interrupted/failed job in place — the single-job
+    equivalent of a batch's "Retry rows" (see batch_retry): host/port/SSL/
+    username/options are pulled back out of this job's own DB record;
+    password falls back to a still-stored "auto-resume" credential (see
+    has_stored_password on /api/jobs) if the client doesn't supply one,
+    same as any other password field in this app otherwise — sent once,
+    never written to a file.
+    """
+    if not IMAPSYNC_BIN:
+        return jsonify({
+            "error": "imapsync binary not found on this server. Run install.sh, "
+                     "or set IMAPSYNC_BIN, then restart the service."
+        }), 503
+
+    original = db.get_job(DB_PATH, job_id)
+    if not original:
+        return jsonify({"error": "Unknown job id."}), 404
+    if original["status"] not in ("error", "interrupted"):
+        return jsonify({"error": "Job is not in a retryable state."}), 400
+
+    payload = request.get_json(silent=True) or {}
+    password1 = (payload.get("password1") or "").strip()
+    password2 = (payload.get("password2") or "").strip()
+    if not password1 or not password2:
+        creds = db.get_credentials(DB_PATH, job_id)
+        if creds:
+            password1 = password1 or crypto_store.decrypt(creds["enc_password1"])
+            password2 = password2 or crypto_store.decrypt(creds["enc_password2"])
+    if not password1 or not password2:
+        return jsonify({"error": "Missing password(s)."}), 400
+
+    job = _new_job_dict({
+        "host1": original["host1"], "port1": original["port1"], "ssl1": bool(original["ssl1"]),
+        "user1": original["user1"], "authuser1": original.get("authuser1") or None,
+        "host2": original["host2"], "port2": original["port2"], "ssl2": bool(original["ssl2"]),
+        "user2": original["user2"], "authuser2": original.get("authuser2") or None,
+        "options": json.loads(original["options_json"] or "{}"),
+    })
+    db.create_job(DB_PATH, job)
+    with ACTIVE_LOCK:
+        ACTIVE[job["id"]] = {"lines": [], "subscribers": [], "done": False}
+
+    threading.Thread(target=_execute_job, args=(job, password1, password2), daemon=True).start()
+
+    # Handed off to the new job above — redundant now, same as batch_retry.
+    db.delete_credentials(DB_PATH, job_id)
+
+    return jsonify({"job_id": job["id"]})
+
+
 @app.route("/api/stream/<job_id>")
 def stream(job_id):
     live_response = _stream_live(ACTIVE, ACTIVE_LOCK, job_id)
@@ -1097,7 +1150,10 @@ threading.Thread(target=_scheduler_loop, daemon=True).start()
 
 @app.route("/api/jobs")
 def list_jobs():
-    return jsonify(db.list_jobs(DB_PATH))
+    jobs = db.list_jobs(DB_PATH)
+    for job in jobs:
+        job["has_stored_password"] = db.get_credentials(DB_PATH, job["id"]) is not None
+    return jsonify(jobs)
 
 
 @app.route("/api/batches")

@@ -148,21 +148,29 @@ unconditionally instead, since it's already safe to run concurrently (see
 its own CAS-based `db.claim_due_schedules`, below) even if `--workers` were
 misconfigured — don't apply the same `WON_STARTUP_RACE` gating there.
 
-Recovering an interrupted batch's rows relies on
-`imapsync` itself being incremental (re-running the same host/user/options
-only copies what's missing), not on any checkpoint/resume logic in this app
-— "Resume" (single job), "Retry rows"/"Download failed CSV" (a batch), and
-auto-resume (below) are all just convenient ways to re-supply
+Recovering an interrupted job/batch relies on `imapsync` itself being
+incremental (re-running the same host/user/options only copies what's
+missing), not on any checkpoint/resume logic in this app — "Resume"/
+"Resume now" (single job), "Retry rows"/"Download failed CSV" (a batch),
+and auto-resume (below) are all just convenient ways to re-supply
 host/user/options (+ a password) for another `_new_job_dict` / `_execute_job`
 run, nothing more.
 
-Retrying a batch's failed/interrupted rows — by hand via `/api/batches/
-<id>/retry` (the "Retry rows" modal) or automatically via
-`_auto_resume_interrupted_batches` (below) — goes through the shared
-`_launch_retry_batch` helper, which is `bulk_start`'s batch-creation tail
-(create batch → queued rows → background thread) factored out for reuse
-against rows built from *already-stored* job records instead of a freshly
-parsed CSV.
+Retrying a single job — by hand via `/api/jobs/<id>/retry` — and retrying a
+batch's failed/interrupted rows — via `/api/batches/<id>/retry` (the
+"Retry rows" modal) or automatically via `_auto_resume_interrupted_batches`
+(below) — all fall back to a still-stored "auto-resume" credential
+(`has_stored_password` on `/api/jobs` and `/api/batches/<id>/jobs`) when
+the caller doesn't supply a password, instead of requiring one every time;
+the frontend's "Resume now" button (vs. "Resume", which still jumps to the
+New migration form for manual retyping) is this exposed as a one-click
+action for a single job, same idea as the Retry-rows modal's "saved
+password" rows. The batch path goes through the shared `_launch_retry_batch`
+helper, which is `bulk_start`'s batch-creation tail (create batch → queued
+rows → background thread) factored out for reuse against rows built from
+*already-stored* job records instead of a freshly parsed CSV; the
+single-job path (`job_retry`) is small enough to just inline the
+equivalent of `/api/start`'s job creation directly.
 
 ### Scheduled delta sync
 

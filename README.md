@@ -255,16 +255,20 @@ startup, this app marks any job that was still "Running" as **Interrupted**
 in History (rather than leaving a phantom "Running" row forever) — nothing
 is silently lost, but that specific run never got a final result.
 
-To continue, click **Resume** next to an Interrupted (or Failed) row in
-History. It re-fills the New migration form with that job's exact
-host/port/SSL/username/options — you only need to re-type the two
-passwords, since those are never stored — then click **Start migration**
-again. This isn't a checkpoint/resume feature we built; it relies on
-`imapsync` itself being incremental: it checks what already exists on the
-destination and only transfers what's missing, so re-running the same
-migration doesn't re-copy anything that already made it across. This is
-also the right way to periodically re-sync an account (e.g. run it again a
-day later to pick up new mail) — same button, same idea.
+To continue, an Interrupted (or Failed) row in History gets one of two
+buttons: if it still has a password stored (from Auto-resume — e.g. it was
+killed via a batch's Stop button rather than lost to a crash),
+**Resume now** re-launches it immediately, reusing that password — one
+click, nothing to retype. Otherwise, **Resume** re-fills the New migration
+form with that job's exact host/port/SSL/username/options — you only need
+to re-type the two passwords, since those aren't kept around normally —
+then click **Start migration** again. Neither is a checkpoint/resume
+feature this app built; both rely on `imapsync` itself being incremental:
+it checks what already exists on the destination and only transfers what's
+missing, so re-running the same migration doesn't re-copy anything that
+already made it across. This is also the right way to periodically re-sync
+an account (e.g. run it again a day later to pick up new mail) — same
+buttons, same idea.
 
 ## Bulk migration from a CSV file
 
