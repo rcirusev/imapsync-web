@@ -857,7 +857,7 @@
           <button class="btn btn-ghost btn-small" data-view-batch="${batch.id}">View rows</button>
           ${batch.status === "running" ? `<button class="btn btn-ghost btn-small" data-stop-batch="${batch.id}">Stop</button>` : ""}
           ${canRetry ? `<button class="btn btn-ghost btn-small" data-retry-batch="${batch.id}">Retry rows</button>` : ""}
-          ${canRetry ? `<a class="btn btn-ghost btn-small" href="/api/batches/${batch.id}/failed.csv">Download failed CSV</a>` : ""}
+          ${canRetry ? `<a class="link-muted" href="/api/batches/${batch.id}/failed.csv" title="Alternative to Retry rows: a CSV with these rows' host/user/options, for editing in a spreadsheet or handing off">or CSV</a>` : ""}
         </div></td>
       `;
       tr._batch = batch;
@@ -891,7 +891,13 @@
     }
     historyBody.innerHTML = "";
     jobs.forEach((job) => {
-      const canResume = job.status === "error" || job.status === "interrupted";
+      // A batch row's own row already gets "Retry rows" at the batch
+      // level (see Bulk batches) — showing a second, independent Resume
+      // button here for the same row just duplicates that with none of
+      // its context (no saved-password indicator across the whole batch,
+      // no multi-row selection). Keep this list's own Resume for rows
+      // that have no other path back: standalone (non-bulk) migrations.
+      const canResume = !job.batch_id && (job.status === "error" || job.status === "interrupted");
       const tr = document.createElement("tr");
       const started = job.started_at
         ? new Date(job.started_at * 1000).toLocaleString()
@@ -913,7 +919,7 @@
         <td class="nowrap">${fmtDuration(job.duration_s)}</td>
         <td><div class="history-actions">
           <button class="btn btn-ghost btn-small" data-job="${job.id}">View log</button>
-          ${canResume ? renderResumeButton(job) : ""}
+          ${canResume ? `<button class="btn btn-ghost btn-small" data-resume="${job.id}">Resume</button>` : ""}
         </div></td>
       `;
       tr._job = job;
@@ -923,43 +929,8 @@
       btn.addEventListener("click", () => openLogModal(btn.dataset.job));
     });
     historyBody.querySelectorAll("button[data-resume]").forEach((btn) => {
-      btn.addEventListener("click", () => resumeJob(btn.closest("tr")._job));
+      btn.addEventListener("click", () => openResumeModal(btn.closest("tr")._job));
     });
-    historyBody.querySelectorAll("button[data-resume-now]").forEach((btn) => {
-      btn.addEventListener("click", () => resumeJobNow(btn.dataset.resumeNow, btn));
-    });
-  }
-
-  // A job with a still-stored "auto-resume" password (see
-  // has_stored_password on /api/jobs) can go straight back out with one
-  // click, reusing it — same as a batch's "Retry rows" does per-row.
-  // Without one, fall back to the original behavior: jump to New
-  // migration with everything but the password(s) pre-filled.
-  function renderResumeButton(job) {
-    return job.has_stored_password
-      ? `<button class="btn btn-ghost btn-small" data-resume-now="${job.id}" title="Reuses the saved password — no retyping">Resume now</button>`
-      : `<button class="btn btn-ghost btn-small" data-resume="${job.id}">Resume</button>`;
-  }
-
-  function resumeJobNow(jobId, btn) {
-    btn.disabled = true;
-    btn.textContent = "Resuming…";
-    fetch(`/api/jobs/${jobId}/retry`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...CSRF_HEADERS },
-      body: JSON.stringify({}),
-    })
-      .then(async (r) => {
-        const body = await r.json();
-        if (!r.ok) throw new Error(body.error || "Failed to resume.");
-        loadHistory();
-        loadBatches();
-      })
-      .catch((err) => {
-        alert(err.message);
-        btn.disabled = false;
-        btn.textContent = "Resume now";
-      });
   }
 
   batchesSearchInput.addEventListener("input", renderBatches);
@@ -991,7 +962,11 @@
         clearTimeout(historyPollTimer);
         allJobs = jobs;
         renderHistory();
-        const anyRunning = jobs.some((j) => j.status === "running");
+        // "queued" also needs to keep polling, not just "running" — a row
+        // waiting its turn (e.g. most of a large bulk batch, or the brief
+        // moment right after a retry resets it) will become "running" and
+        // then settle shortly, and this is what notices that happening.
+        const anyRunning = jobs.some((j) => j.status === "running" || j.status === "queued");
         if (anyRunning && historyTabVisible) {
           historyPollTimer = setTimeout(loadHistory, 4000);
         }
@@ -1007,50 +982,84 @@
   // transfers what's missing, so re-running doesn't re-copy anything that
   // already made it across. Passwords are never stored, so those two
   // fields are deliberately left blank for you to re-enter.
-  function resumeJob(job) {
+  // ---- Resume modal (single, standalone migration — a bulk-batch row
+  // resumes via that batch's own "Retry rows" instead, see renderHistory)
+  // ---- Re-launches the same host/port/SSL/user/options as the original
+  // job, in place (see /api/jobs/<id>/retry): imapsync itself is
+  // incremental, so it only transfers what's still missing on the
+  // destination. If the job still has a password stored (from a previous
+  // "Auto-resume" opt-in), the fields here are optional — leave them
+  // blank to reuse it; otherwise both are required. ----
+  const resumeModal = document.getElementById("resume-modal");
+  const resumeModalTitle = document.getElementById("resume-modal-title");
+  const resumeModalAccounts = document.getElementById("resume-modal-accounts");
+  const resumeModalPassword1 = document.getElementById("resume-modal-password1");
+  const resumeModalPassword2 = document.getElementById("resume-modal-password2");
+  const resumeModalError = document.getElementById("resume-modal-error");
+  const resumeModalSubmit = document.getElementById("resume-modal-submit");
+  let resumeModalJobId = null;
+  let resumeModalHasStoredPassword = false;
+
+  resumeModal.querySelectorAll("[data-close]").forEach((el) =>
+    el.addEventListener("click", () => (resumeModal.hidden = true))
+  );
+
+  function openResumeModal(job) {
     if (!job) return;
-    let options = {};
-    try {
-      options = JSON.parse(job.options_json || "{}");
-    } catch (e) {
-      options = {};
+    resumeModalJobId = job.id;
+    resumeModalHasStoredPassword = !!job.has_stored_password;
+    resumeModalTitle.textContent = "Resume";
+    resumeModalAccounts.innerHTML =
+      accountCell(job.user1, job.host1) +
+      '<span class="account-arrow">→</span>' +
+      accountCell(job.user2, job.host2);
+    resumeModalPassword1.value = "";
+    resumeModalPassword2.value = "";
+    const placeholder = resumeModalHasStoredPassword ? "Saved password" : "Password";
+    resumeModalPassword1.placeholder = placeholder;
+    resumeModalPassword2.placeholder = placeholder;
+    resumeModalError.hidden = true;
+    resumeModalSubmit.disabled = false;
+    resumeModalSubmit.textContent = "Resume";
+    resumeModal.hidden = false;
+    resumeModalPassword1.focus();
+  }
+
+  resumeModalSubmit.addEventListener("click", () => {
+    const password1 = resumeModalPassword1.value;
+    const password2 = resumeModalPassword2.value;
+    resumeModalError.hidden = true;
+    if ((!password1 || !password2) && !resumeModalHasStoredPassword) {
+      resumeModalError.hidden = false;
+      resumeModalError.className = "conn-test-status fail";
+      resumeModalError.textContent = "Both passwords are needed to resume.";
+      return;
     }
 
-    form.host1.value = job.host1 || "";
-    form.port1.value = job.port1 || "";
-    form.ssl1.checked = !!job.ssl1;
-    form.user1.value = job.user1 || "";
-    document.getElementById("master-account-1").checked = !!job.authuser1;
-    applyMasterAccount1();
-    form.authuser1.value = job.authuser1 || "";
-    form.password1.value = "";
-    form.host2.value = job.host2 || "";
-    form.port2.value = job.port2 || "";
-    form.ssl2.checked = !!job.ssl2;
-    form.user2.value = job.user2 || "";
-    document.getElementById("master-account-2").checked = !!job.authuser2;
-    applyMasterAccount2();
-    form.authuser2.value = job.authuser2 || "";
-    form.password2.value = "";
-    form.dry.checked = !!options.dry;
-    form.syncflags.checked = options.syncflags !== false;
-    form.delete2duplicates.checked = !!options.delete2duplicates;
-    form.subscribeall.checked = options.subscribeall !== false;
-    form.exclude.value = options.exclude || "";
-
-    tabs.forEach((t) => t.classList.remove("active"));
-    document.querySelector('.tab[data-tab="new"]').classList.add("active");
-    Object.values(panels).forEach((p) => (p.hidden = true));
-    panels.new.hidden = false;
-
-    setStatus("idle", "Idle");
-    statsSection.hidden = true;
-    consoleTouched = false;
-    consoleEl.textContent =
-      "Re-enter both passwords (never stored) and click “Start migration” to resume — " +
-      "imapsync only transfers what's still missing on the destination, it won't re-copy anything already synced.";
-    form.password1.focus();
-  }
+    resumeModalSubmit.disabled = true;
+    resumeModalSubmit.textContent = "Resuming…";
+    fetch(`/api/jobs/${resumeModalJobId}/retry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...CSRF_HEADERS },
+      body: JSON.stringify({ password1, password2 }),
+    })
+      .then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error || "Failed to resume.");
+        resumeModal.hidden = true;
+        loadHistory();
+        loadBatches();
+      })
+      .catch((err) => {
+        resumeModalError.hidden = false;
+        resumeModalError.className = "conn-test-status fail";
+        resumeModalError.textContent = err.message;
+      })
+      .finally(() => {
+        resumeModalSubmit.disabled = false;
+        resumeModalSubmit.textContent = "Resume";
+      });
+  });
 
   // ---- Log modal ----
   const modal = document.getElementById("log-modal");
@@ -1234,8 +1243,12 @@
           return;
         }
         batchModalBody.innerHTML = "";
+        // Read-only: this modal is for looking, not acting — retrying a
+        // row happens through the batch's own "Retry rows" (History ->
+        // Bulk batches), which already lets you pick specific rows and
+        // shows the whole batch's saved-password state at once instead of
+        // one row in isolation here.
         jobs.forEach((job) => {
-          const canResume = job.status === "error" || job.status === "interrupted";
           const tr = document.createElement("tr");
           tr.innerHTML = `
             <td>${accountCell(job.user1, job.host1)}</td>
@@ -1244,45 +1257,13 @@
             <td class="nowrap">${fmtOrDash(job.messages)}</td>
             <td class="nowrap">${fmtOrDash(job.errors)}</td>
             <td class="nowrap">${fmtDuration(job.duration_s)}</td>
-            <td><div class="history-actions">
-              <button class="btn btn-ghost btn-small" data-job="${job.id}">View log</button>
-              ${canResume ? renderResumeButton(job) : ""}
-            </div></td>
+            <td><button class="btn btn-ghost btn-small" data-job="${job.id}">View log</button></td>
           `;
           tr._job = job;
           batchModalBody.appendChild(tr);
         });
         batchModalBody.querySelectorAll("button[data-job]").forEach((btn) => {
           btn.addEventListener("click", () => openLogModal(btn.dataset.job));
-        });
-        batchModalBody.querySelectorAll("button[data-resume]").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            batchModal.hidden = true;
-            resumeJob(btn.closest("tr")._job);
-          });
-        });
-        batchModalBody.querySelectorAll("button[data-resume-now]").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            btn.disabled = true;
-            btn.textContent = "Resuming…";
-            fetch(`/api/jobs/${btn.dataset.resumeNow}/retry`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...CSRF_HEADERS },
-              body: JSON.stringify({}),
-            })
-              .then(async (r) => {
-                const body = await r.json();
-                if (!r.ok) throw new Error(body.error || "Failed to resume.");
-                loadHistory();
-                loadBatches();
-                openBatchModal(batch); // refresh this modal's rows in place
-              })
-              .catch((err) => {
-                alert(err.message);
-                btn.disabled = false;
-                btn.textContent = "Resume now";
-              });
-          });
         });
       })
       .catch(() => {

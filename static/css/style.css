@@ -264,6 +264,31 @@ legend {
   color: var(--text-muted);
 }
 
+/* Separates an unrelated checkbox/field group from the one above it (e.g.
+   a one-time "keep resumable" opt-in vs. an ongoing recurring schedule) —
+   plain vertical rhythm alone wasn't enough to keep the two from reading
+   as one continuous set of related options. */
+.field-divider {
+  border: none;
+  border-top: 1px solid var(--gridline);
+  margin: 4px 0 14px;
+}
+
+/* A secondary, lower-emphasis alternative sitting next to a primary
+   btn-ghost action (e.g. "or CSV" beside "Retry rows") — plain text
+   rather than a bordered button, so it doesn't visually compete. */
+.link-muted {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link-muted:hover {
+  color: var(--text-primary);
+}
+
 .field-row {
   display: flex;
   gap: 14px;

@@ -150,11 +150,22 @@ misconfigured — don't apply the same `WON_STARTUP_RACE` gating there.
 
 Recovering an interrupted job/batch relies on `imapsync` itself being
 incremental (re-running the same host/user/options only copies what's
-missing), not on any checkpoint/resume logic in this app — "Resume"/
-"Resume now" (single job), "Retry rows"/"Download failed CSV" (a batch),
-and auto-resume (below) are all just convenient ways to re-supply
-host/user/options (+ a password) for another `_execute_job` run, nothing
-more.
+missing), not on any checkpoint/resume logic in this app — "Resume"
+(single job), "Retry rows"/"or CSV" (a batch), and auto-resume (below) are
+all just convenient ways to re-supply host/user/options (+ a password) for
+another `_execute_job` run, nothing more.
+
+**A batch-row job never gets its own single-job retry UI** — Migration
+history and the batch-detail ("View rows") modal both only offer Resume
+for a job whose `batch_id` is null; a batch row retries exclusively
+through that batch's own "Retry rows" (History → Bulk batches), which
+already knows which of the batch's rows still need it and shows the whole
+batch's saved-password state at once, instead of one row in isolation.
+`/api/jobs/<id>/retry` (`job_retry`) still handles a `batch_id` job
+correctly if called directly (delegates to `_retry_batch_rows`, below, so
+the batch's own status/progress stay in sync) — that path just isn't
+exposed by any button anymore, kept as a correctness guarantee for the
+endpoint itself rather than a reachable UI action.
 
 **Retrying reuses the existing row(s) in place — same job id(s), same
 batch id — rather than creating new ones.** `db.reset_job_for_retry` resets
@@ -189,20 +200,28 @@ and retrying a batch's failed/interrupted rows — via
 automatically via `_auto_resume_interrupted_batches` (below) — all fall
 back to a still-stored "auto-resume" credential (`has_stored_password` on
 `/api/jobs` and `/api/batches/<id>/jobs`) when the caller doesn't supply a
-password, instead of requiring one every time; the frontend's "Resume now"
-button (vs. "Resume", which still jumps to the New migration form for
-manual retyping) exposes this as a one-click action for a single job, same
-idea as the Retry-rows modal's "saved password" rows. **If the job has a
-`batch_id`, `job_retry` delegates to `_retry_batch_rows` for that one row**
-instead of `_execute_job`-ing it directly — a bare single-job retry would
-leave the *batch's own* status/progress at their stale pre-retry values
-(no "Running" state in the Bulk batches table, so no way to Stop it, even
-while the row is actively running). The batch path goes
-through the shared `_retry_batch_rows` helper — reset each retried row
+password, instead of requiring one every time. The frontend's single
+"Resume" button (`openResumeModal`, `#resume-modal`) is the same dialog
+whether or not a password is stored — it just labels the password fields
+"Saved password" and makes them optional when one is (leaving both blank
+reuses it, same idea as the Retry-rows modal's "saved password" rows) —
+rather than two different buttons ("Resume" vs. "Resume now") for what's
+otherwise the same action; there's also no more separate "jump to the New
+migration form and retype everything" path — `#resume-modal` covers both
+cases, so `resumeJob`/the old form pre-fill no longer exist. The batch path
+goes through the shared `_retry_batch_rows` helper — reset each retried row
 (`reset_job_for_retry`, optionally re-storing its credential),
-`reopen_batch_for_retry`, then hand the same `rows` (now carrying each
-row's *existing* job id in `_job_id`, not a freshly generated one) to
-`_run_batch_thread`.
+`reopen_batch_for_retry` (which also immediately calls
+`recompute_batch_progress`, so the Bulk batches table doesn't show stale
+counts until the first retried row finishes), then hand the same `rows`
+(now carrying each row's *existing* job id in `_job_id`, not a freshly
+generated one) to `_run_batch_thread`.
+
+`loadHistory`'s auto-poll (History tab) only kept refreshing while some
+job was `status === "running"` — a row sitting `queued` (its brief state
+right after a retry resets it, or most of a large batch waiting its turn)
+didn't count, so a very fast retry could visibly get stuck on a stale
+status until the user hit Refresh by hand. It now also counts `queued`.
 
 ### Scheduled delta sync
 

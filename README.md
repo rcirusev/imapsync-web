@@ -255,23 +255,22 @@ startup, this app marks any job that was still "Running" as **Interrupted**
 in History (rather than leaving a phantom "Running" row forever) — nothing
 is silently lost, but that specific run never got a final result.
 
-To continue, an Interrupted (or Failed) row in History gets one of two
-buttons: if it still has a password stored (from Auto-resume — e.g. it was
-killed via a batch's Stop button rather than lost to a crash),
-**Resume now** re-launches it **in place** — same row, log appended to
-(not replaced), reusing that password — one click, nothing to retype, and
-nothing new added to History. Otherwise, **Resume** re-fills the New
-migration form with that job's exact host/port/SSL/username/options — you
-only need to re-type the two passwords, since those aren't kept around
-normally — then click **Start migration** again, which (unlike "Resume
-now") does start a genuinely new row, since typing fresh passwords into
-the form is effectively a new migration attempt. Neither is a
-checkpoint/resume feature this app built; both rely on `imapsync` itself
-being incremental: it checks what already exists on the destination and
-only transfers what's missing, so re-running the same migration doesn't
+To continue, an Interrupted (or Failed) row in History that isn't part of
+a bulk batch (see Bulk migration below for those — they retry from their
+batch instead) gets a **Resume** button. It opens a small dialog showing
+the source/destination and a password field for each; if a password is
+still stored for that row (from **Keep resumable** — e.g. it was killed
+via a batch's Stop button rather than lost to a crash), those fields are
+optional — leave them blank to reuse it, or type new ones to override it
+just this once. Either way, clicking Resume re-launches the job **in
+place** — same row, log appended to (not replaced) — instead of a
+checkpoint/resume feature this app built; it, like everything else here
+that "resumes" something, just relies on `imapsync` itself being
+incremental: it checks what already exists on the destination and only
+transfers what's missing, so re-running the same migration doesn't
 re-copy anything that already made it across. This is also the right way
 to periodically re-sync an account (e.g. run it again a day later to pick
-up new mail) — same buttons, same idea.
+up new mail) — same button, same idea.
 
 ## Bulk migration from a CSV file
 
@@ -328,8 +327,8 @@ started (passwords excluded by default), so nothing is lost even for a row
 that never actually started `imapsync`: it's marked **Interrupted** too, on
 the next startup, right alongside rows that failed mid-run.
 
-What happens next depends on whether **Auto-resume if the server restarts
-mid-batch** was checked when the batch was started:
+What happens next depends on whether **Keep resumable** was checked when
+the batch was started:
 
 - **Checked:** every still-pending row's password was kept encrypted for
   exactly this. On the very next startup, before anything else, this app
@@ -356,7 +355,10 @@ same idea as an Exchange/Office 365 IMAP migration batch:
   a list of migrations you ran, not a pile of UUIDs.
 - **Drill into one batch.** Clicking **View rows** on a batch opens just its
   mailboxes — status, message/error counts, per-row log — instead of
-  scrolling through every job from every batch mixed together.
+  scrolling through every job from every batch mixed together. It's
+  read-only (retrying happens through **Retry rows**, below, which already
+  knows which rows still need it and shows the whole batch's saved-password
+  state at once).
 - **Stop a running batch.** The **Stop** button (in the Bulk tab's console,
   and next to any "Running" batch in History) stops picking up any row
   that hasn't started yet, and also terminates whichever row is currently
@@ -368,24 +370,24 @@ same idea as an Exchange/Office 365 IMAP migration batch:
 - **Retry only the failed rows.** Once a batch has any errors, was stopped,
   or was interrupted, two ways to rerun just what still needs it (never the
   whole original file) show up next to it in History → Bulk batches:
-    - **Retry rows** opens those rows right in the browser — host/source
-      shown per row, a password field for each, **Retry selected rows**
-      re-runs them **in place** (same batch, same rows — nothing new added
-      to History). Nothing ever touches a file; the passwords go straight
-      from that form to the retry, the same as any password field in this
-      app. A row tagged **"saved password"**
-      (it still has one stored from Auto-resume, e.g. it was killed via
-      Stop rather than lost to a crash) can be left blank to reuse it
-      instead of retyping it — and the modal's own "Auto-resume this retry
-      too" checkbox defaults to checked whenever any row being retried
-      already had one, so that protection carries forward on its own
-      across repeated stop/retry cycles instead of needing to be
-      re-enabled by hand every time.
-    - **Download failed CSV** produces the same set of rows as a CSV
-      instead, with host/port/SSL/username/options carried over and
-      passwords left blank for you to fill in and re-upload via the normal
-      Bulk tab — useful if you'd rather edit the list in a spreadsheet
-      first, or hand it off to someone else to fill in.
+    - **Retry rows** — the primary way — opens those rows right in the
+      browser — host/source shown per row, a password field for each,
+      **Retry selected rows** re-runs them **in place** (same batch, same
+      rows — nothing new added to History). Nothing ever touches a file;
+      the passwords go straight from that form to the retry, the same as
+      any password field in this app. A row tagged **"saved password"**
+      (it still has one stored from **Keep resumable**, e.g. it was killed
+      via Stop rather than lost to a crash) can be left blank to reuse it
+      instead of retyping it — and the modal's own **Keep resumable**
+      checkbox defaults to checked whenever any row being retried already
+      had one, so that protection carries forward on its own across
+      repeated stop/retry cycles instead of needing to be re-enabled by
+      hand every time.
+    - **or CSV**, next to it — a lower-key alternative for when you'd
+      rather edit the list in a spreadsheet first, or hand it off to
+      someone else to fill in. Produces the same set of rows as a CSV,
+      with host/port/SSL/username/options carried over and passwords left
+      blank, to fill in and re-upload via the normal Bulk tab.
 
 ## Scheduled delta sync
 

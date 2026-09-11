@@ -253,15 +253,17 @@
       </p>
       <label class="field-checkbox">
         <input type="checkbox" id="bulk-keep-passwords">
-        <span>Auto-resume if the server restarts mid-batch</span>
+        <span>Keep resumable</span>
       </label>
       <p class="field-hint">
         Keeps every row's password encrypted just until this batch finishes
-        (success, error, or stopped), so a crash/restart part-way through a
-        large batch resumes the still-pending rows on its own — no retyping
-        hundreds of passwords by hand. Off by default; passwords are deleted
-        the moment the batch finishes either way.
+        (success, error, or stopped) — a crash/restart part-way through a
+        large batch resumes the still-pending rows on its own, and a manual
+        Retry rows won't ask for the password again either. Off by
+        default; passwords are deleted the moment the batch finishes
+        either way.
       </p>
+      <hr class="field-divider">
       <label class="field-checkbox">
         <input type="checkbox" id="bulk-schedule-enabled">
         <span>Automatically re-run this whole batch to catch new mail, until I stop it</span>
@@ -545,6 +547,34 @@
     </div>
   </div>
 
+  <div id="resume-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h3 id="resume-modal-title">Resume</h3>
+        <button class="btn btn-ghost" data-close type="button">✕</button>
+      </div>
+      <div id="resume-modal-accounts" class="account-pair"></div>
+      <p class="field-hint" id="resume-modal-hint">
+        Passwords are typed here and sent straight to resume — never
+        written to a file.
+      </p>
+      <label class="field">
+        <span>Source password</span>
+        <input type="password" id="resume-modal-password1" autocomplete="off">
+      </label>
+      <label class="field">
+        <span>Destination password</span>
+        <input type="password" id="resume-modal-password2" autocomplete="off">
+      </label>
+      <span class="conn-test-status" id="resume-modal-error" hidden></span>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="resume-modal-cancel" type="button" data-close>Cancel</button>
+        <button class="btn btn-primary" id="resume-modal-submit" type="button">Resume</button>
+      </div>
+    </div>
+  </div>
+
   <div id="retry-modal" class="modal" hidden>
     <div class="modal-backdrop" data-close></div>
     <div class="modal-panel modal-panel-wide">
@@ -561,10 +591,10 @@
       </p>
       <label class="field-checkbox">
         <input type="checkbox" id="retry-keep-passwords">
-        <span>Auto-resume this retry too if the server restarts mid-batch</span>
+        <span>Keep resumable</span>
       </label>
       <p class="field-hint">
-        Keeps these passwords encrypted just until this new batch finishes,
+        Keeps these passwords encrypted just until the batch next finishes,
         so it can recover on its own from a crash without retyping them
         again. Off by default.
       </p>
