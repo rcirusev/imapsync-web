@@ -92,7 +92,23 @@ On process startup, any job/batch still `running` or `queued` in the DB is
 relabeled `interrupted` (`db.mark_orphaned_running_as_interrupted` /
 `mark_orphaned_batches_as_interrupted`) — the in-memory `ACTIVE`/`BATCHES`
 registries don't survive a restart, so a "Running"/"Queued" row at startup
-is always stale. Recovering an interrupted batch's rows relies on
+is always stale. **This whole sweep (plus `_auto_resume_interrupted_batches`
+below) is gated by `WON_STARTUP_RACE`** — an advisory, non-blocking
+`fcntl.flock` on `<data dir>/.startup.lock` acquired at import time — so
+that only ONE gunicorn worker process ever runs it per boot, not each of
+`install.sh`/the Dockerfile's `--workers 2` independently. Without this, two
+workers booting at once could both see the same interrupted batch and each
+launch their own resume of it, or one worker's brand-new resumed batch
+(rows briefly `queued` the instant they're created) could get caught by a
+*sibling* worker's own orphan sweep — which has no way to tell "genuinely
+stale from before this boot" apart from "a sibling worker just created
+this" — cascading into repeated `(auto-resumed) (auto-resumed)` batches.
+`_scheduler_loop`'s 60s poll deliberately runs unconditionally in every
+worker instead, since it's already safe to run concurrently (see its own
+CAS-based `db.claim_due_schedules`, below) — don't apply the same
+`WON_STARTUP_RACE` gating there.
+
+Recovering an interrupted batch's rows relies on
 `imapsync` itself being incremental (re-running the same host/user/options
 only copies what's missing), not on any checkpoint/resume logic in this app
 — "Resume" (single job), "Retry rows"/"Download failed CSV" (a batch), and

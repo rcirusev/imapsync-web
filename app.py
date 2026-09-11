@@ -23,6 +23,7 @@ Environment variables:
                           existed. See README's Security notes.
 """
 
+import fcntl
 import hmac
 import json
 import os
@@ -69,8 +70,37 @@ DB_PATH = os.path.join(DATA_DIR, "imapsync-web.sqlite3")
 LOGS_DIR = os.path.join(DATA_DIR, "logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
 db.init_db(DB_PATH)
-db.mark_orphaned_running_as_interrupted(DB_PATH)
-db.mark_orphaned_batches_as_interrupted(DB_PATH)
+
+# install.sh/Dockerfile run gunicorn with multiple worker PROCESSES (2 by
+# default), each of which imports this module — and therefore, without this
+# guard, each of which would independently run the one-time startup sweep
+# below. That's actively dangerous, not just wasteful: two workers booting
+# at once can both see the same "interrupted" batch and each launch their
+# own resume of it, or worse, one worker's brand-new resumed batch (rows
+# briefly "queued" the instant they're created) can get caught by a
+# *sibling* worker's own orphan sweep — which has no way to tell "genuinely
+# stale from before this boot" apart from "a sibling worker created this a
+# moment ago" — triggering another auto-resume on top of it, cascading
+# ("batch (auto-resumed) (auto-resumed)...").
+#
+# An advisory, non-blocking flock on a marker file means only the first
+# worker to reach this line actually runs the sweep; every other worker's
+# flock call fails immediately and it skips straight past — there's
+# nothing for it to wait for, the winner already has it covered. The lock
+# is deliberately never released: it lives exactly as long as the winning
+# worker process does, and a future gunicorn restart starts this whole
+# race fresh (the OS drops the flock the instant that process exits).
+_startup_lock_fp = open(os.path.join(DATA_DIR, ".startup.lock"), "w")
+try:
+    fcntl.flock(_startup_lock_fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    WON_STARTUP_RACE = True
+except OSError:
+    WON_STARTUP_RACE = False
+
+if WON_STARTUP_RACE:
+    db.mark_orphaned_running_as_interrupted(DB_PATH)
+    db.mark_orphaned_batches_as_interrupted(DB_PATH)
+
 crypto_store.init(DATA_DIR)
 
 IMAPSYNC_BIN = os.environ.get("IMAPSYNC_BIN") or runner.find_imapsync_binary()
@@ -920,7 +950,8 @@ def delete_schedule(schedule_id):
     return jsonify({"ok": True})
 
 
-_auto_resume_interrupted_batches()
+if WON_STARTUP_RACE:
+    _auto_resume_interrupted_batches()
 threading.Thread(target=_scheduler_loop, daemon=True).start()
 
 
