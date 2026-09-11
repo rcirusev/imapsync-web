@@ -192,7 +192,12 @@ back to a still-stored "auto-resume" credential (`has_stored_password` on
 password, instead of requiring one every time; the frontend's "Resume now"
 button (vs. "Resume", which still jumps to the New migration form for
 manual retyping) exposes this as a one-click action for a single job, same
-idea as the Retry-rows modal's "saved password" rows. The batch path goes
+idea as the Retry-rows modal's "saved password" rows. **If the job has a
+`batch_id`, `job_retry` delegates to `_retry_batch_rows` for that one row**
+instead of `_execute_job`-ing it directly — a bare single-job retry would
+leave the *batch's own* status/progress at their stale pre-retry values
+(no "Running" state in the Bulk batches table, so no way to Stop it, even
+while the row is actively running). The batch path goes
 through the shared `_retry_batch_rows` helper — reset each retried row
 (`reset_job_for_retry`, optionally re-storing its credential),
 `reopen_batch_for_retry`, then hand the same `rows` (now carrying each

@@ -487,12 +487,34 @@ def job_retry(job_id):
     if not password1 or not password2:
         return jsonify({"error": "Missing password(s)."}), 400
 
+    options = json.loads(original["options_json"] or "{}")
+
+    if original.get("batch_id"):
+        # This row belongs to a bulk batch — route through the same
+        # _retry_batch_rows machinery "Retry rows" uses, instead of just
+        # _execute_job-ing it directly, so the BATCH's own status/progress
+        # stay in sync too. Retrying only the job and leaving the batch
+        # row untouched left it showing its old, stale status (e.g. still
+        # "Interrupted") in the Bulk batches table — no "Running" state,
+        # so no Stop button, even while this row was actively running.
+        batch = db.get_batch(DB_PATH, original["batch_id"])
+        if not batch:
+            return jsonify({"error": "This row's batch no longer exists."}), 404
+        _retry_batch_rows(batch, [{
+            "host1": original["host1"], "port1": original["port1"], "ssl1": bool(original["ssl1"]),
+            "user1": original["user1"], "authuser1": original.get("authuser1") or None, "password1": password1,
+            "host2": original["host2"], "port2": original["port2"], "ssl2": bool(original["ssl2"]),
+            "user2": original["user2"], "authuser2": original.get("authuser2") or None, "password2": password2,
+            "options": options, "_job_id": job_id,
+        }], keep_passwords=False)
+        return jsonify({"job_id": job_id, "batch_id": batch["id"]})
+
     job = _new_job_dict({
         "host1": original["host1"], "port1": original["port1"], "ssl1": bool(original["ssl1"]),
         "user1": original["user1"], "authuser1": original.get("authuser1") or None,
         "host2": original["host2"], "port2": original["port2"], "ssl2": bool(original["ssl2"]),
         "user2": original["user2"], "authuser2": original.get("authuser2") or None,
-        "options": json.loads(original["options_json"] or "{}"),
+        "options": options,
     }, job_id=job_id)
     db.reset_job_for_retry(DB_PATH, job_id)
     with ACTIVE_LOCK:
@@ -675,6 +697,12 @@ def _retry_batch_rows(batch, rows, keep_passwords):
                 crypto_store.encrypt(row["password1"]), crypto_store.encrypt(row["password2"]), now,
             )
     db.reopen_batch_for_retry(DB_PATH, batch["id"])
+    # Reflect the just-reset rows immediately rather than leaving the
+    # batch's completed/success/error at their stale pre-retry values
+    # until the first row actually finishes (a few seconds away for a
+    # slow migration) — matters most right after this call returns, since
+    # that's when the Bulk batches table gets its next look.
+    db.recompute_batch_progress(DB_PATH, batch["id"])
     with BATCHES_LOCK:
         BATCHES[batch["id"]] = {"lines": [], "subscribers": [], "done": False}
 
