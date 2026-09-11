@@ -1270,6 +1270,12 @@
           retryModalSubmit.disabled = true;
           return;
         }
+        // Default to keeping this retry resumable too if the batch being
+        // retried already was (any row still has a saved password) — so
+        // that protection carries forward on its own instead of quietly
+        // lapsing the moment someone forgets to re-check this box on a
+        // second, third, ... retry of the same ongoing row.
+        retryKeepPasswordsCheckbox.checked = retryable.some((j) => j.has_stored_password);
         retryModalBody.innerHTML = "";
         retryable.forEach((job) => {
           const tr = document.createElement("tr");

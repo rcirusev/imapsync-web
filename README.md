@@ -366,7 +366,11 @@ same idea as an Exchange/Office 365 IMAP migration batch:
       any password field in this app. A row tagged **"saved password"**
       (it still has one stored from Auto-resume, e.g. it was killed via
       Stop rather than lost to a crash) can be left blank to reuse it
-      instead of retyping it.
+      instead of retyping it — and the modal's own "Auto-resume this retry
+      too" checkbox defaults to checked whenever any row being retried
+      already had one, so that protection carries forward on its own
+      across repeated stop/retry cycles instead of needing to be
+      re-enabled by hand every time.
     - **Download failed CSV** produces the same set of rows as a CSV
       instead, with host/port/SSL/username/options carried over and
       passwords left blank for you to fill in and re-upload via the normal
