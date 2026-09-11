@@ -65,6 +65,33 @@ each static file's mtime as a cache-busting query string
 (`_asset_version`/`asset_version`), so edits to `app.js`/`style.css` are
 picked up on refresh without a build step.
 
+**Visual identity — deliberately quiet.** This is an admin console for
+running real customer migrations, so the styling stays restrained: solid
+panels, thin rules, compact spacing, small radii, Manrope for UI text and
+DM Mono for machine data (hosts, timestamps, counts, log output). There is
+exactly **one accent** (`--series-1`, teal) for primary buttons, focus
+rings, the active tab and progress fills, kept separate from the semantic
+`--status-good/warning/serious/critical` tokens. Colour and motion have to
+encode something — progress, status, liveness; decorative effects
+(gradient washes, glass panels, hover lifts, ripples) were explicitly
+rejected and shouldn't creep back in. Light is the default and dark is the
+same design on a darker ground — `:root` / `:root[data-theme="dark"]` in
+`static/css/style.css`; the theme toggle (`#theme-toggle` in app.js)
+always stamps an explicit `data-theme`, so the root is never unstamped.
+The console keeps its dark surface in both themes, since it is raw process
+output.
+
+Both font families are vendored under `static/fonts/` (latin + cyrillic
+subsets only) rather than loaded from Google's CDN, so the UI keeps
+working — and keeps rendering Cyrillic batch names/hostnames correctly —
+in a network-restricted deployment. To change a weight or family:
+fetch Google's `css2` endpoint with a browser user-agent, keep only the
+`latin`/`cyrillic` `@font-face` blocks, download each distinct `url()`
+once into `static/fonts/`, and rewrite the `@font-face` block at the top
+of `style.css` to point at the local files. Note that Google serves some
+families as a single variable-weight file reused across several
+`font-weight` declarations — that is expected, not a duplicate.
+
 ### Job execution model
 
 **This app must run as a single gunicorn worker PROCESS** (`--workers 1`,

@@ -7,6 +7,8 @@
   const statsSection = document.getElementById("stats-section");
   const themeToggle = document.getElementById("theme-toggle");
   const binaryBanner = document.getElementById("binary-banner");
+  const binaryStatus = document.getElementById("binary-status");
+  const binaryStatusText = document.getElementById("binary-status-text");
 
   // ---- Test connection (login-only check, no imapsync run) ----
   const testConnectionBtn = document.getElementById("test-connection-btn");
@@ -150,6 +152,9 @@
     .then(({ available }) => {
       binaryBanner.hidden = available;
       startBtn.disabled = !available;
+      binaryStatus.hidden = false;
+      binaryStatus.classList.toggle("crit", !available);
+      binaryStatusText.textContent = available ? "imapsync ready" : "imapsync missing";
     })
     .catch(() => {});
 
