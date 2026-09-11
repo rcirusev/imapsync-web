@@ -349,6 +349,7 @@
   const bulkProgressIndeterminate = document.getElementById("bulk-progress-indeterminate");
   const bulkBatchNameInput = document.getElementById("bulk-batch-name");
   const bulkMaxConcurrentInput = document.getElementById("bulk-max-concurrent");
+  const bulkKeepPasswordsCheckbox = document.getElementById("bulk-keep-passwords");
   const bulkStopBtn = document.getElementById("bulk-stop-btn");
   const bulkScheduleEnabledCheckbox = document.getElementById("bulk-schedule-enabled");
   const bulkScheduleIntervalRow = document.getElementById("bulk-schedule-interval-row");
@@ -438,6 +439,7 @@
     formData.append("file", file);
     formData.append("name", bulkBatchNameInput.value.trim());
     formData.append("max_concurrent", bulkMaxConcurrentInput.value || "1");
+    formData.append("keep_passwords", bulkKeepPasswordsCheckbox.checked ? "true" : "false");
     formData.append("schedule_enabled", bulkScheduleEnabledCheckbox.checked ? "true" : "false");
     formData.append("schedule_interval_hours", bulkScheduleIntervalInput.value || "0");
 
@@ -1233,13 +1235,16 @@
   // ---- Retry modal (re-run a batch's failed/interrupted rows without ever
   // writing a password to a file — typed straight into this form and sent
   // directly to /api/batches/<id>/retry, same as any other password field
-  // in this app: sent once, never stored). Alternative to "Download failed
-  // CSV" for people who don't want passwords passing through a CSV file. ----
+  // in this app: sent once, and stored only if "Auto-resume" below is
+  // checked, until this new batch finishes). Alternative to "Download
+  // failed CSV" for people who don't want passwords passing through a CSV
+  // file. ----
   const retryModal = document.getElementById("retry-modal");
   const retryModalTitle = document.getElementById("retry-modal-title");
   const retryModalBody = document.getElementById("retry-modal-body");
   const retryModalError = document.getElementById("retry-modal-error");
   const retryModalSubmit = document.getElementById("retry-modal-submit");
+  const retryKeepPasswordsCheckbox = document.getElementById("retry-keep-passwords");
   let retryBatchId = null;
 
   retryModal.querySelectorAll("[data-close]").forEach((el) =>
@@ -1253,6 +1258,7 @@
     retryModalError.hidden = true;
     retryModalSubmit.disabled = false;
     retryModalSubmit.textContent = "Retry selected rows";
+    retryKeepPasswordsCheckbox.checked = false;
     retryModalBody.innerHTML = `<tr><td colspan="5" class="history-empty">Loading…</td></tr>`;
 
     fetch(`/api/batches/${batch.id}/jobs`)
@@ -1315,7 +1321,7 @@
     fetch(`/api/batches/${retryBatchId}/retry`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...CSRF_HEADERS },
-      body: JSON.stringify({ rows }),
+      body: JSON.stringify({ rows, keep_passwords: retryKeepPasswordsCheckbox.checked }),
     })
       .then(async (r) => {
         const body = await r.json();

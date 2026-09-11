@@ -56,9 +56,17 @@ CREATE TABLE IF NOT EXISTS batches (
 );
 CREATE INDEX IF NOT EXISTS idx_batches_created_at ON batches (created_at DESC);
 
--- Encrypted passwords, ONLY for jobs the user explicitly opted into
--- "scheduled delta sync" for (see crypto_store.py). Every other job in
--- this app never has a row here — passwords aren't stored by default.
+-- Encrypted passwords — an explicit opt-in exception to "passwords are
+-- never stored" (see crypto_store.py), used for exactly two features:
+--   1. "Scheduled delta sync" (see schedules below) — kept indefinitely
+--      until the schedule is deleted.
+--   2. A bulk batch's "auto-resume if the server restarts mid-batch"
+--      checkbox — kept only until that batch finishes (success, error, or
+--      stopped), then purged (see app.py's _run_batch_thread /
+--      _auto_resume_interrupted_batches). Lets a large batch (hundreds of
+--      rows) survive a crash and pick back up on its own, without retyping
+--      every password, without keeping them around any longer than that.
+-- Every other job in this app never has a row here.
 CREATE TABLE IF NOT EXISTS credential_vault (
     job_id        TEXT PRIMARY KEY,
     enc_password1 TEXT NOT NULL,
@@ -263,6 +271,17 @@ def get_batch(db_path, batch_id):
     return dict(row) if row else None
 
 
+def list_batches_by_status(db_path, status):
+    """Unlike list_batches, no limit — used by the startup auto-resume sweep,
+    which must not silently miss an old interrupted batch just because more
+    than 50 batches have run since."""
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        "SELECT * FROM batches WHERE status = ? ORDER BY created_at DESC", (status,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def mark_started(db_path, job_id, started_at):
     # Also flips status to 'running' — a bulk-batch row is pre-created as
     # 'queued' (see create_job's status param) before its worker actually
@@ -351,6 +370,13 @@ def clear_history(db_path):
 
     if job_ids:
         conn.executemany("DELETE FROM jobs WHERE id = ?", [(jid,) for jid in job_ids])
+        # A deleted job's "auto-resume if the server restarts mid-batch"
+        # credentials (if any) would otherwise become orphaned — still
+        # sitting encrypted in the vault with no job left to ever clean
+        # them up. protected_job_ids above already keeps job_ids from
+        # including anything an active schedule still needs, so this is
+        # safe to do unconditionally for every job actually being deleted.
+        conn.executemany("DELETE FROM credential_vault WHERE job_id = ?", [(jid,) for jid in job_ids])
     if batch_ids:
         conn.executemany("DELETE FROM batches WHERE id = ?", [(bid,) for bid in batch_ids])
     conn.commit()
@@ -421,6 +447,17 @@ def list_schedules(db_path):
 def get_schedule(db_path, schedule_id):
     conn = get_conn(db_path)
     row = conn.execute("SELECT * FROM schedules WHERE id = ?", (schedule_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_schedule_by_ref(db_path, kind, ref_id):
+    """Used to tell whether a given job/batch already has an active
+    schedule pointing at it — e.g. so end-of-batch credential cleanup
+    doesn't purge passwords a delta-sync schedule still needs indefinitely."""
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT * FROM schedules WHERE kind = ? AND ref_id = ?", (kind, ref_id)
+    ).fetchone()
     return dict(row) if row else None
 
 

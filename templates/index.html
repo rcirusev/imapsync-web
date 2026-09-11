@@ -252,6 +252,17 @@
         servers can handle multiple simultaneous IMAP connections.
       </p>
       <label class="field-checkbox">
+        <input type="checkbox" id="bulk-keep-passwords">
+        <span>Auto-resume if the server restarts mid-batch</span>
+      </label>
+      <p class="field-hint">
+        Keeps every row's password encrypted just until this batch finishes
+        (success, error, or stopped), so a crash/restart part-way through a
+        large batch resumes the still-pending rows on its own — no retyping
+        hundreds of passwords by hand. Off by default; passwords are deleted
+        the moment the batch finishes either way.
+      </p>
+      <label class="field-checkbox">
         <input type="checkbox" id="bulk-schedule-enabled">
         <span>Automatically re-run this whole batch to catch new mail, until I stop it</span>
       </label>
@@ -263,8 +274,9 @@
       </div>
       <p class="field-hint" id="bulk-schedule-hint" hidden>
         Stores every row's passwords, encrypted, so the batch can log back in
-        on its own — the one case in this app where passwords aren't
-        single-use. Manage or turn off any time from History → Scheduled
+        on its own — kept indefinitely until you turn this off (unlike
+        "Auto-resume" above, which only holds them until this one batch
+        finishes). Manage or turn off any time from History → Scheduled
         delta syncs.
       </p>
       <div class="bulk-upload-row">
@@ -542,7 +554,16 @@
       </div>
       <p class="hint-text">
         Passwords are typed here and sent straight to start the retry — never
-        written to a file, and never stored. Uncheck a row to skip it.
+        written to a file. Uncheck a row to skip it.
+      </p>
+      <label class="field-checkbox">
+        <input type="checkbox" id="retry-keep-passwords">
+        <span>Auto-resume this retry too if the server restarts mid-batch</span>
+      </label>
+      <p class="field-hint">
+        Keeps these passwords encrypted just until this new batch finishes,
+        so it can recover on its own from a crash without retyping them
+        again. Off by default.
       </p>
       <div class="modal-table-wrap">
         <table class="history-table">

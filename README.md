@@ -129,12 +129,15 @@ reachable by people who should have access.
 - **The migration itself is real.** Every "Start migration" click runs the
   actual `imapsync` binary with the accounts and options from the form, and
   the console shows its real, unmodified stdout live.
-- **Passwords are never stored or logged.** They're sent once over the
-  `/api/start` request to kick off the job, written to a temp file with
-  `0600` permissions for `imapsync`'s own `--passfile1`/`--passfile2` flags
-  (so they never appear in `ps aux` either), and the temp file is deleted as
-  soon as the job ends. They are never written to the per-job log or the
-  database.
+- **Passwords are never stored or logged, by default.** They're sent once
+  over the `/api/start` request to kick off the job, written to a temp file
+  with `0600` permissions for `imapsync`'s own `--passfile1`/`--passfile2`
+  flags (so they never appear in `ps aux` either), and the temp file is
+  deleted as soon as the job ends. They are never written to the per-job
+  log. The two explicit opt-in exceptions, both encrypted at rest, are
+  **Scheduled delta sync** (below) and a bulk batch's **Auto-resume if the
+  server restarts mid-batch** checkbox (see Bulk migration below) — off
+  unless you turn them on.
 - **The summary stat tiles (folders / messages / errors) are best-effort.**
   imapsync's exact log wording has drifted across releases, so these are
   parsed with a few regexes against common phrasing (see
@@ -306,11 +309,24 @@ startup rather than showing "Running" forever, and it keeps the exact
 progress it had reached (e.g. "42/100"). Every row — including ones that
 hadn't gotten their turn to run yet — already has its host/port/SSL/
 username/options recorded in the database from the moment the batch
-started (passwords excluded, as always), so nothing is lost even for a row
+started (passwords excluded by default), so nothing is lost even for a row
 that never actually started `imapsync`: it's marked **Interrupted** too, on
-the next startup, right alongside rows that failed mid-run. Use **Download
-failed CSV** (see Batches below) to get every row that still needs a rerun
-— started or not — instead of re-uploading the entire original file.
+the next startup, right alongside rows that failed mid-run.
+
+What happens next depends on whether **Auto-resume if the server restarts
+mid-batch** was checked when the batch was started:
+
+- **Checked:** every still-pending row's password was kept encrypted for
+  exactly this. On the very next startup, before anything else, this app
+  automatically launches a new batch with just those rows — no one needs to
+  do anything. Those temporary passwords are deleted the moment that new
+  batch itself finishes (or, sooner, the moment `clear_history` removes the
+  row). If a delta-sync schedule is also attached to the batch, this is
+  skipped — that schedule already re-runs it on its own on its usual timer.
+- **Unchecked (the default):** nothing was kept, so nothing can resume on
+  its own. Use **Retry rows** or **Download failed CSV** (see Batches
+  below) by hand to get every row that still needs a rerun — started or
+  not — instead of re-uploading the entire original file.
 
 ### Batches, like Office 365 migration batches
 

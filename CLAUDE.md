@@ -70,40 +70,79 @@ picked up on refresh without a build step.
 A migration (single or one bulk-CSV row) becomes a **job dict**
 (`_new_job_dict`) with a generated `id`. `_execute_job` is the single
 codepath that runs one job to completion, for both single migrations and
-bulk rows: marks it started in the DB, streams `imapsync`'s output into the
-`ACTIVE` in-memory registry (keyed by job id) which `/api/stream/<job_id>`
-tails via SSE, persists the parsed result, and closes the stream. Jobs run
-as daemon background threads with no concurrency cap.
+bulk rows: marks it started in the DB (`db.mark_started`, which also flips
+status to `running`), streams `imapsync`'s output into the `ACTIVE`
+in-memory registry (keyed by job id) which `/api/stream/<job_id>` tails via
+SSE, persists the parsed result, and closes the stream. Jobs run as daemon
+background threads.
 
-A **batch** (`BATCHES` registry, keyed by batch id) runs its rows
-sequentially via `_run_batch_thread`, broadcasting `row_start`/`row_done`/
+A **batch** (`BATCHES` registry, keyed by batch id) runs its rows through a
+bounded `ThreadPoolExecutor` (`_run_batch_thread`, `max_concurrent` workers,
+default 1 = fully sequential), broadcasting `row_start`/`row_done`/
 `batch_done` control events; the actual per-row log still flows through the
-matching `ACTIVE[job_id]` stream, not through the batch stream.
+matching `ACTIVE[job_id]` stream, not through the batch stream. Every row
+gets its DB job row created **up front**, status `queued` (host/user/
+options only, never a password) — before any worker actually picks it up —
+specifically so a row still waiting its turn has a durable record if the
+process dies before its turn comes; `db.mark_started` promotes it to
+`running` when a worker finally gets to it. A row skipped by a Stop request
+is written straight to `interrupted` instead of vanishing.
 
-On process startup, any job/batch still `running` in the DB is relabeled
-`interrupted` (`db.mark_orphaned_running_as_interrupted` /
+On process startup, any job/batch still `running` or `queued` in the DB is
+relabeled `interrupted` (`db.mark_orphaned_running_as_interrupted` /
 `mark_orphaned_batches_as_interrupted`) — the in-memory `ACTIVE`/`BATCHES`
-registries don't survive a restart, so a "Running" row at startup is always
-stale. Resuming relies on `imapsync` itself being incremental (re-running the
-same host/user/options only copies what's missing), not on any
-checkpoint/resume logic in this app.
+registries don't survive a restart, so a "Running"/"Queued" row at startup
+is always stale. Recovering an interrupted batch's rows relies on
+`imapsync` itself being incremental (re-running the same host/user/options
+only copies what's missing), not on any checkpoint/resume logic in this app
+— "Resume" (single job), "Retry rows"/"Download failed CSV" (a batch), and
+auto-resume (below) are all just convenient ways to re-supply
+host/user/options (+ a password) for another `_new_job_dict` / `_execute_job`
+run, nothing more.
+
+Retrying a batch's failed/interrupted rows — by hand via `/api/batches/
+<id>/retry` (the "Retry rows" modal) or automatically via
+`_auto_resume_interrupted_batches` (below) — goes through the shared
+`_launch_retry_batch` helper, which is `bulk_start`'s batch-creation tail
+(create batch → queued rows → background thread) factored out for reuse
+against rows built from *already-stored* job records instead of a freshly
+parsed CSV.
 
 ### Scheduled delta sync
 
-The only feature that stores a password. `_enable_delta_sync` encrypts and
-stores credentials in `credential_vault` (keyed by job id) plus a row in
-`schedules` (kind `job` or `batch`, `ref_id` pointing at the job/batch to
-re-run). A background loop (`_scheduler_loop`, 60s tick) claims due schedules
-via `db.claim_due_schedules`, which uses a compare-and-swap `UPDATE ...
-WHERE next_run_at <= ?` specifically so multiple gunicorn worker processes
-polling the same SQLite DB can't double-claim and double-run a schedule.
+`_enable_delta_sync` encrypts and stores credentials in `credential_vault`
+(keyed by job id) plus a row in `schedules` (kind `job` or `batch`, `ref_id`
+pointing at the job/batch to re-run) — kept **indefinitely** until the
+schedule is explicitly deleted. A background loop (`_scheduler_loop`, 60s
+tick) claims due schedules via `db.claim_due_schedules`, which uses a
+compare-and-swap `UPDATE ... WHERE next_run_at <= ?` specifically so
+multiple gunicorn worker processes polling the same SQLite DB can't
+double-claim and double-run a schedule.
+
+### Bulk batch auto-resume ("keep passwords until this batch finishes")
+
+The other `credential_vault` use, and the only one that isn't indefinite:
+opting in via the Bulk tab's or Retry-rows modal's "Auto-resume if the
+server restarts mid-batch" checkbox stores that batch's row passwords
+alongside its `queued` rows, purged the moment the batch reaches a terminal
+state (`_run_batch_thread`'s end, unless `db.get_schedule_by_ref(...,
+"batch", batch_id)` finds an active delta-sync schedule for that exact
+batch_id — that schedule owns the indefinite copy instead). On startup,
+right after the orphan-interrupt sweep, `_auto_resume_interrupted_batches`
+scans for `interrupted` batches with still-stored credentials and silently
+relaunches their pending rows via `_launch_retry_batch` — no user action.
+`db.clear_history` also purges any `credential_vault` row belonging to a
+job it deletes, so a manual history-clear can't orphan one.
 
 ### Security-relevant conventions (don't casually change)
 
-- **Passwords are never persisted except in the credential vault above.**
-  They're written to `0600` temp files for imapsync's `--passfile1/2` flags
-  (never on the command line, never in logs/DB) and deleted immediately
-  after the process exits (`imapsync_runner.run_imapsync`).
+- **Passwords are never persisted except in `credential_vault`, and only
+  for the two explicit opt-ins above** (scheduled delta sync; a batch's
+  auto-resume checkbox, purged once that batch finishes). Every other
+  password is written to a `0600` temp file for imapsync's
+  `--passfile1/2` flags (never on the command line, never in logs/DB) and
+  deleted immediately after the process exits
+  (`imapsync_runner.run_imapsync`).
 - **CSRF header check** (`app.py::_require_csrf_header`): every non-GET
   request must carry `X-Requested-With: imapsync-web` (sent by
   `static/js/app.js`), since Basic Auth alone doesn't stop cross-site state
