@@ -1277,8 +1277,8 @@
             <td><input type="checkbox" class="retry-row-check" checked></td>
             <td>${accountCell(job.user1, job.host1)}</td>
             <td>${accountCell(job.user2, job.host2)}</td>
-            <td><input type="password" class="retry-row-password1" autocomplete="off" placeholder="••••••••"></td>
-            <td><input type="password" class="retry-row-password2" autocomplete="off" placeholder="••••••••"></td>
+            <td><input type="password" class="retry-row-password1" autocomplete="off" placeholder="Password"></td>
+            <td><input type="password" class="retry-row-password2" autocomplete="off" placeholder="Password"></td>
           `;
           tr._job = job;
           retryModalBody.appendChild(tr);
