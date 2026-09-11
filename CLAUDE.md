@@ -180,10 +180,18 @@ double-claim and double-run a schedule.
 The other `credential_vault` use, and the only one that isn't indefinite:
 opting in via the Bulk tab's or Retry-rows modal's "Auto-resume if the
 server restarts mid-batch" checkbox stores that batch's row passwords
-alongside its `queued` rows, purged the moment the batch reaches a terminal
-state (`_run_batch_thread`'s end, unless `db.get_schedule_by_ref(...,
-"batch", batch_id)` finds an active delta-sync schedule for that exact
-batch_id — that schedule owns the indefinite copy instead). On startup,
+alongside its `queued` rows. At `_run_batch_thread`'s end, only rows that
+actually finished `success` have theirs purged (nothing left to ever
+retry); a row left `error`/`interrupted` — including one Stop just killed
+(see below) — keeps its stored password, both so a *future* crash before
+anyone gets to it can still auto-resume it, and so `batch_retry` (the
+"Retry rows" endpoint) can fall back to it when the client sends a blank
+password for that job_id instead of making someone retype it (exposed to
+the frontend as each job's `has_stored_password`, via `batch_jobs`).
+Skipped entirely (nothing purged, regardless of status) if
+`db.get_schedule_by_ref(..., "batch", batch_id)` finds an active
+delta-sync schedule for that exact batch_id — that schedule owns an
+indefinite copy of every row's credentials instead. On startup,
 right after the orphan-interrupt sweep, `_auto_resume_interrupted_batches`
 scans **every** `interrupted` batch with still-stored credentials and
 silently relaunches its pending rows via `_launch_retry_batch` — no user

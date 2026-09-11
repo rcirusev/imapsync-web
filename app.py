@@ -562,15 +562,25 @@ def _run_batch_thread(batch_id, rows, schedule_id=None, max_concurrent=1):
     else:
         db.finish_batch(DB_PATH, batch_id, time.time())
 
-    # This batch is done (one way or another) — drop any "auto-resume if the
-    # server restarts mid-batch" credentials it was holding, unless an
-    # active delta-sync schedule references this exact batch_id (that
-    # schedule needs them to keep re-running indefinitely; only ever true
+    # This batch is done (one way or another) — drop "auto-resume if the
+    # server restarts mid-batch" credentials for rows that actually
+    # succeeded (nothing left to ever retry, so nothing left to resume).
+    # Rows still interrupted/errored — including one Stop just killed —
+    # keep theirs: a future crash before anyone gets to it can still
+    # auto-resume it, and "Retry rows" (see batch_retry) can reuse it
+    # instead of making someone retype a password that's already sitting
+    # there encrypted for exactly this. Skipped entirely if an active
+    # delta-sync schedule references this exact batch_id (only ever true
     # for the original bulk_start batch, never for a retry/auto-resumed
-    # one, which each get their own fresh batch_id). A no-op delete if this
-    # batch never opted into that checkbox to begin with.
+    # one) — that schedule needs every row's credentials kept indefinitely
+    # regardless of that row's last outcome.
     if not db.get_schedule_by_ref(DB_PATH, "batch", batch_id):
-        db.delete_credentials_many(DB_PATH, [row["_job_id"] for row in rows if row.get("_job_id")])
+        job_ids = {row["_job_id"] for row in rows if row.get("_job_id")}
+        successful_job_ids = [
+            job["id"] for job in db.list_jobs_by_batch(DB_PATH, batch_id)
+            if job["id"] in job_ids and job["status"] == "success"
+        ]
+        db.delete_credentials_many(DB_PATH, successful_job_ids)
 
     _broadcast(BATCHES, BATCHES_LOCK, batch_id, "batch_done", {
         "total": total, "success": counts["success"], "error": counts["errors"], "stopped": stopped_early,
@@ -730,7 +740,13 @@ def bulk_stop(batch_id):
 
 @app.route("/api/batches/<batch_id>/jobs")
 def batch_jobs(batch_id):
-    return jsonify(db.list_jobs_by_batch(DB_PATH, batch_id))
+    jobs = db.list_jobs_by_batch(DB_PATH, batch_id)
+    # Never the password itself — just whether one is sitting encrypted in
+    # the vault for this row (see batch_retry), so the Retry-rows modal can
+    # let those rows through without retyping it.
+    for job in jobs:
+        job["has_stored_password"] = db.get_credentials(DB_PATH, job["id"]) is not None
+    return jsonify(jobs)
 
 
 @app.route("/api/batches/<batch_id>/failed.csv")
@@ -777,6 +793,16 @@ def batch_retry(batch_id):
             continue
         password1 = (entry.get("password1") or "").strip()
         password2 = (entry.get("password2") or "").strip()
+        if not password1 or not password2:
+            # Nothing typed for this row — fall back to a still-stored
+            # "auto-resume" credential if this row has one (e.g. it was
+            # killed via Stop rather than retyped by hand), instead of
+            # making the user retype a password that's already sitting
+            # there encrypted for exactly this.
+            creds = db.get_credentials(DB_PATH, job_id)
+            if creds:
+                password1 = password1 or crypto_store.decrypt(creds["enc_password1"])
+                password2 = password2 or crypto_store.decrypt(creds["enc_password2"])
         if not password1 or not password2:
             row_errors.append({"row": job_id, "reason": "Missing password(s)."})
             continue

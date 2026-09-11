@@ -363,7 +363,10 @@ same idea as an Exchange/Office 365 IMAP migration batch:
       shown per row, a password field for each, **Retry selected rows**
       starts a new batch with them. Nothing ever touches a file; the
       passwords go straight from that form to the new batch, the same as
-      any password field in this app.
+      any password field in this app. A row tagged **"saved password"**
+      (it still has one stored from Auto-resume, e.g. it was killed via
+      Stop rather than lost to a crash) can be left blank to reuse it
+      instead of retyping it.
     - **Download failed CSV** produces the same set of rows as a CSV
       instead, with host/port/SSL/username/options carried over and
       passwords left blank for you to fill in and re-upload via the normal

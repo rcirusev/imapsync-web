@@ -1273,12 +1273,16 @@
         retryModalBody.innerHTML = "";
         retryable.forEach((job) => {
           const tr = document.createElement("tr");
+          const savedBadge = job.has_stored_password
+            ? ' <span class="bulk-tag" title="A password is already stored for this row — leave blank to reuse it">saved password</span>'
+            : "";
+          const pwPlaceholder = job.has_stored_password ? "Saved password" : "Password";
           tr.innerHTML = `
             <td><input type="checkbox" class="retry-row-check" checked></td>
-            <td>${accountCell(job.user1, job.host1)}</td>
+            <td>${accountCell(job.user1, job.host1, savedBadge)}</td>
             <td>${accountCell(job.user2, job.host2)}</td>
-            <td><input type="password" class="retry-row-password1" autocomplete="off" placeholder="Password"></td>
-            <td><input type="password" class="retry-row-password2" autocomplete="off" placeholder="Password"></td>
+            <td><input type="password" class="retry-row-password1" autocomplete="off" placeholder="${pwPlaceholder}"></td>
+            <td><input type="password" class="retry-row-password2" autocomplete="off" placeholder="${pwPlaceholder}"></td>
           `;
           tr._job = job;
           retryModalBody.appendChild(tr);
@@ -1298,7 +1302,9 @@
       if (!checked) return;
       const password1 = tr.querySelector(".retry-row-password1").value;
       const password2 = tr.querySelector(".retry-row-password2").value;
-      if (!password1 || !password2) missingPassword = true;
+      // A row with a saved password can go through blank — the server
+      // falls back to it. Only rows without one need something typed here.
+      if ((!password1 || !password2) && !tr._job.has_stored_password) missingPassword = true;
       rows.push({ job_id: tr._job.id, password1, password2 });
     });
 
