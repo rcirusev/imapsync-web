@@ -167,6 +167,16 @@ the batch's own status/progress stay in sync) — that path just isn't
 exposed by any button anymore, kept as a correctness guarantee for the
 endpoint itself rather than a reachable UI action.
 
+**Migration history groups a batch's rows into one summary row**
+(`renderHistory`/`renderHistoryBatchRow` in `static/js/app.js`) instead of
+listing every row individually — a 30-row batch would otherwise flood the
+list. Grouping is purely a frontend lookup against the already-loaded
+`allBatches` array (matched via each job's `batch_id`), no new endpoint;
+a row whose batch isn't loaded yet falls back to showing on its own so
+nothing is silently dropped. Clicking the group opens the same read-only
+batch-detail ("View rows") modal used from the Bulk batches card — there's
+still only that one place to inspect a batch's individual rows.
+
 **Retrying reuses the existing row(s) in place — same job id(s), same
 batch id — rather than creating new ones.** `db.reset_job_for_retry` resets
 a job row back to `queued` with its stats cleared (used by both the

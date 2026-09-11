@@ -879,6 +879,74 @@
     });
   }
 
+  function renderHistoryJobRow(job) {
+    // A batch row's own row already gets "Retry rows" at the batch
+    // level (see Bulk batches) — showing a second, independent Resume
+    // button here for the same row just duplicates that with none of
+    // its context (no saved-password indicator across the whole batch,
+    // no multi-row selection). Keep this list's own Resume for rows
+    // that have no other path back: standalone (non-bulk) migrations.
+    const canResume = !job.batch_id && (job.status === "error" || job.status === "interrupted");
+    const tr = document.createElement("tr");
+    const started = job.started_at
+      ? new Date(job.started_at * 1000).toLocaleString()
+      : new Date(job.created_at * 1000).toLocaleString();
+    const startedTags = [
+      job.batch_id ? '<span class="bulk-tag">bulk</span>' : "",
+      job.schedule_id ? '<span class="bulk-tag">auto</span>' : "",
+    ].filter(Boolean).join("");
+    tr.innerHTML = `
+      <td><div class="started-cell">
+        <span class="nowrap">${started}</span>
+        ${startedTags ? `<div class="started-tags">${startedTags}</div>` : ""}
+      </div></td>
+      <td>${accountCell(job.user1, job.host1, job.authuser1 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser1) + '">master</span>' : "")}</td>
+      <td>${accountCell(job.user2, job.host2, job.authuser2 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser2) + '">master</span>' : "")}</td>
+      <td class="nowrap"><span class="status-badge status-${job.status}">${STATUS_LABEL[job.status] || job.status}</span></td>
+      <td class="nowrap">${fmtOrDash(job.messages)}</td>
+      <td class="nowrap">${fmtOrDash(job.errors)}</td>
+      <td class="nowrap">${fmtDuration(job.duration_s)}</td>
+      <td><div class="history-actions">
+        <button class="btn btn-ghost btn-small" data-job="${job.id}">View log</button>
+        ${canResume ? `<button class="btn btn-ghost btn-small" data-resume="${job.id}">Resume</button>` : ""}
+      </div></td>
+    `;
+    tr._job = job;
+    return tr;
+  }
+
+  // One summary row for an entire bulk batch, standing in for however many
+  // individual rows it has (a 30-row batch would otherwise flood this list
+  // with 30 near-identical entries). Clicking it opens the same read-only
+  // "View rows" modal used from the Bulk batches card above, rather than
+  // duplicating that table here.
+  function renderHistoryBatchRow(batch) {
+    const tr = document.createElement("tr");
+    const started = new Date(batch.created_at * 1000).toLocaleString();
+    const startedTags = [
+      '<span class="bulk-tag">bulk</span>',
+      batch.schedule_id ? '<span class="bulk-tag">auto</span>' : "",
+    ].filter(Boolean).join("");
+    const badgeStatus = batch.status === "done" ? "success" : batch.status;
+    const displayName = batch.name || `Batch ${batch.id.slice(0, 8)}`;
+    tr.innerHTML = `
+      <td><div class="started-cell">
+        <span class="nowrap">${started}</span>
+        <div class="started-tags">${startedTags}</div>
+      </div></td>
+      <td colspan="2">${escapeHtml(displayName)} <span class="text-muted">(${batch.total} row${batch.total === 1 ? "" : "s"})</span></td>
+      <td class="nowrap"><span class="status-badge status-${badgeStatus}">${BATCH_STATUS_LABEL[batch.status] || batch.status}</span></td>
+      <td class="nowrap">—</td>
+      <td class="nowrap">${fmtOrDash(batch.error)}</td>
+      <td class="nowrap">—</td>
+      <td><div class="history-actions">
+        <button class="btn btn-ghost btn-small" data-view-batch="${batch.id}">View rows</button>
+      </div></td>
+    `;
+    tr._batch = batch;
+    return tr;
+  }
+
   function renderHistory() {
     const jobs = filterJobs(allJobs);
     if (!allJobs.length) {
@@ -890,46 +958,41 @@
       return;
     }
     historyBody.innerHTML = "";
+
+    // Bulk rows are grouped under their batch's own summary row instead of
+    // listing every row individually. A row whose batch isn't loaded yet
+    // (e.g. loadBatches hasn't resolved on first visit) falls back to
+    // showing on its own rather than being silently dropped.
+    const standaloneJobs = [];
+    const batchGroups = new Map();
     jobs.forEach((job) => {
-      // A batch row's own row already gets "Retry rows" at the batch
-      // level (see Bulk batches) — showing a second, independent Resume
-      // button here for the same row just duplicates that with none of
-      // its context (no saved-password indicator across the whole batch,
-      // no multi-row selection). Keep this list's own Resume for rows
-      // that have no other path back: standalone (non-bulk) migrations.
-      const canResume = !job.batch_id && (job.status === "error" || job.status === "interrupted");
-      const tr = document.createElement("tr");
-      const started = job.started_at
-        ? new Date(job.started_at * 1000).toLocaleString()
-        : new Date(job.created_at * 1000).toLocaleString();
-      const startedTags = [
-        job.batch_id ? '<span class="bulk-tag">bulk</span>' : "",
-        job.schedule_id ? '<span class="bulk-tag">auto</span>' : "",
-      ].filter(Boolean).join("");
-      tr.innerHTML = `
-        <td><div class="started-cell">
-          <span class="nowrap">${started}</span>
-          ${startedTags ? `<div class="started-tags">${startedTags}</div>` : ""}
-        </div></td>
-        <td>${accountCell(job.user1, job.host1, job.authuser1 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser1) + '">master</span>' : "")}</td>
-        <td>${accountCell(job.user2, job.host2, job.authuser2 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser2) + '">master</span>' : "")}</td>
-        <td class="nowrap"><span class="status-badge status-${job.status}">${STATUS_LABEL[job.status] || job.status}</span></td>
-        <td class="nowrap">${fmtOrDash(job.messages)}</td>
-        <td class="nowrap">${fmtOrDash(job.errors)}</td>
-        <td class="nowrap">${fmtDuration(job.duration_s)}</td>
-        <td><div class="history-actions">
-          <button class="btn btn-ghost btn-small" data-job="${job.id}">View log</button>
-          ${canResume ? `<button class="btn btn-ghost btn-small" data-resume="${job.id}">Resume</button>` : ""}
-        </div></td>
-      `;
-      tr._job = job;
-      historyBody.appendChild(tr);
+      const batch = job.batch_id && allBatches.find((b) => b.id === job.batch_id);
+      if (!batch) {
+        standaloneJobs.push(job);
+        return;
+      }
+      if (!batchGroups.has(batch.id)) batchGroups.set(batch.id, batch);
     });
+
+    const entries = [
+      ...standaloneJobs.map((job) => ({
+        sortKey: job.started_at || job.created_at, render: () => renderHistoryJobRow(job),
+      })),
+      ...[...batchGroups.values()].map((batch) => ({
+        sortKey: batch.created_at, render: () => renderHistoryBatchRow(batch),
+      })),
+    ].sort((a, b) => b.sortKey - a.sortKey);
+
+    entries.forEach((entry) => historyBody.appendChild(entry.render()));
+
     historyBody.querySelectorAll("button[data-job]").forEach((btn) => {
       btn.addEventListener("click", () => openLogModal(btn.dataset.job));
     });
     historyBody.querySelectorAll("button[data-resume]").forEach((btn) => {
       btn.addEventListener("click", () => openResumeModal(btn.closest("tr")._job));
+    });
+    historyBody.querySelectorAll("button[data-view-batch]").forEach((btn) => {
+      btn.addEventListener("click", () => openBatchModal(btn.closest("tr")._batch));
     });
   }
 
@@ -945,6 +1008,11 @@
         clearTimeout(batchesPollTimer);
         allBatches = batches;
         renderBatches();
+        // Migration history groups bulk rows under their batch, so a
+        // fresher/first-loaded batch list needs to re-render it too —
+        // otherwise those rows show individually until history's own next
+        // poll happens to land after this one.
+        if (allJobs.length) renderHistory();
         const anyRunning = batches.some((b) => b.status === "running");
         if (anyRunning && historyTabVisible) {
           batchesPollTimer = setTimeout(loadBatches, 4000);

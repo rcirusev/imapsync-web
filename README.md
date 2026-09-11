@@ -246,7 +246,10 @@ your laptop sleeping does not stop it. To check on it:
 - The **History** tab shows every job, live: while any job is "Running" it
   auto-refreshes every few seconds, and clicking **View log** on a running
   job tails its real output live instead of a stale snapshot — from any
-  browser, any tab, any time.
+  browser, any tab, any time. A bulk batch's rows aren't listed one by one
+  here — they collapse into a single row showing the batch's name and row
+  count; clicking **View rows** on it opens the same per-row detail as the
+  Bulk batches card below.
 
 **Resuming after an interruption:** if the whole server process gets
 interrupted mid-migration (a `systemctl restart`, a VM reboot, a crash) the

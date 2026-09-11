@@ -746,6 +746,10 @@ legend {
   color: var(--text-muted);
 }
 
+.text-muted {
+  color: var(--text-muted);
+}
+
 .account-pair {
   display: flex;
   align-items: center;
