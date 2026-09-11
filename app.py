@@ -28,6 +28,8 @@ import hmac
 import json
 import os
 import queue
+import signal
+import subprocess
 import threading
 import time
 import uuid
@@ -165,10 +167,64 @@ BATCHES = {}
 BATCHES_LOCK = threading.Lock()
 
 # batch_ids with a pending Stop request. Checked by _run_batch_thread before
-# starting each new row — the row already in flight is left to finish
-# normally, only rows that hadn't started yet are skipped.
+# starting each new row — a row not yet started is skipped outright; a row
+# already in flight is separately killed via RUNNING_PROCESSES below rather
+# than left to finish on its own.
 BATCH_CANCEL_REQUESTS = set()
 BATCH_CANCEL_LOCK = threading.Lock()
+
+# job_id -> the live subprocess.Popen running that job's imapsync, for as
+# long as it's running — lets Stop actually terminate an in-flight row
+# instead of only preventing rows that haven't started yet. Killing
+# mid-transfer is safe to resume from for the same reason a crash
+# mid-transfer already is: imapsync itself is incremental.
+RUNNING_PROCESSES = {}
+RUNNING_PROCESSES_LOCK = threading.Lock()
+
+# job_ids _execute_job should report as "interrupted" (with a clear "user
+# stopped this" message) rather than "error" once their subprocess exits —
+# set by _kill_running_job right before it signals the process, since a
+# killed process's exit looks, from the outside, just like any other
+# nonzero-exit failure.
+KILL_REQUESTED = set()
+KILL_REQUESTED_LOCK = threading.Lock()
+
+
+def _signal_process_group(proc, sig):
+    """Signals proc's whole process group (it was started with
+    start_new_session=True — see imapsync_runner.run_imapsync — specifically
+    so this reaches any child it may have shelled out to, not just proc
+    itself), falling back to signaling just the one PID if the group is
+    already gone (a harmless race with the process exiting on its own)."""
+    try:
+        os.killpg(os.getpgid(proc.pid), sig)
+    except ProcessLookupError:
+        pass
+
+
+def _kill_running_job(job_id):
+    """Terminates job_id's live imapsync subprocess (and its whole process
+    group), if it's still running. SIGTERM first; escalates to SIGKILL
+    after a grace period if it doesn't exit on its own. Returns True if a
+    running process was found and signaled, False if this job wasn't (or
+    is no longer) running."""
+    with RUNNING_PROCESSES_LOCK:
+        proc = RUNNING_PROCESSES.get(job_id)
+    if not proc or proc.poll() is not None:
+        return False
+
+    with KILL_REQUESTED_LOCK:
+        KILL_REQUESTED.add(job_id)
+    _signal_process_group(proc, signal.SIGTERM)
+
+    def escalate():
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _signal_process_group(proc, signal.SIGKILL)
+
+    threading.Thread(target=escalate, daemon=True).start()
+    return True
 
 
 def _broadcast(registry, lock, key, event, data):
@@ -246,8 +302,8 @@ def _execute_job(job, password1, password2):
     """
     Runs one real imapsync job to completion: marks it started, streams its
     output into ACTIVE[job_id], persists the result to the DB, and returns
-    the final status ("success" | "error"). Used by both a lone migration
-    and each row of a bulk batch.
+    the final status ("success" | "error" | "interrupted"). Used by both a
+    lone migration and each row of a bulk batch.
     """
     job_id = job["id"]
     db.mark_started(DB_PATH, job_id, time.time())
@@ -255,11 +311,36 @@ def _execute_job(job, password1, password2):
     def on_line(line):
         _broadcast(ACTIVE, ACTIVE_LOCK, job_id, "log", {"line": line})
 
+    def on_process(proc):
+        with RUNNING_PROCESSES_LOCK:
+            RUNNING_PROCESSES[job_id] = proc
+
     try:
         with open(job["log_path"], "w") as log_fp:
             returncode, full_text, elapsed = runner.run_imapsync(
-                IMAPSYNC_BIN, job, password1, password2, log_fp, on_line
+                IMAPSYNC_BIN, job, password1, password2, log_fp, on_line, on_process=on_process
             )
+
+        with KILL_REQUESTED_LOCK:
+            was_killed = job_id in KILL_REQUESTED
+            KILL_REQUESTED.discard(job_id)
+
+        if was_killed:
+            # Deliberately terminated via Stop — report it as such instead
+            # of running it through parse_summary, whose best-effort log
+            # parsing has no idea "nonzero exit" here means "we killed it",
+            # not "imapsync failed on its own".
+            db.finish_job(
+                DB_PATH, job_id, status="interrupted", finished_at=time.time(),
+                folders=None, messages=None, data_mb=None, errors=None,
+                duration_s=round(elapsed, 1), return_code=returncode,
+                error_message="Stopped by user request.",
+            )
+            _broadcast(ACTIVE, ACTIVE_LOCK, job_id, "done", {
+                "status": "interrupted", "duration_s": round(elapsed, 1),
+            })
+            return "interrupted"
+
         summary = runner.parse_summary(full_text, returncode)
         db.finish_job(
             DB_PATH, job_id,
@@ -284,6 +365,10 @@ def _execute_job(job, password1, password2):
         _broadcast(ACTIVE, ACTIVE_LOCK, job_id, "done", {"status": "error", "error": str(exc)})
         return "error"
     finally:
+        with RUNNING_PROCESSES_LOCK:
+            RUNNING_PROCESSES.pop(job_id, None)
+        with KILL_REQUESTED_LOCK:
+            KILL_REQUESTED.discard(job_id)
         _close(ACTIVE, ACTIVE_LOCK, job_id)
 
 
@@ -461,8 +546,16 @@ def _run_batch_thread(batch_id, rows, schedule_id=None, max_concurrent=1):
             future.result()  # propagate a worker crash instead of swallowing it
 
     with BATCH_CANCEL_LOCK:
+        # Membership alone (not just stopped_event, which only fires for a
+        # row skipped *before* it started) also covers the case where Stop
+        # arrived while every row was already in flight and got killed
+        # in-place (see bulk_stop -> _kill_running_job) — that batch was
+        # just as deliberately stopped, and should show "Stopped", not
+        # "Done", even though stopped_event never had a not-yet-started row
+        # to catch.
+        stop_was_requested = batch_id in BATCH_CANCEL_REQUESTS
         BATCH_CANCEL_REQUESTS.discard(batch_id)
-    stopped_early = stopped_event.is_set()
+    stopped_early = stopped_event.is_set() or stop_was_requested
 
     if stopped_early:
         db.stop_batch(DB_PATH, batch_id, time.time())
@@ -625,6 +718,13 @@ def bulk_stop(batch_id):
         return jsonify({"error": "This batch isn't running any more."}), 400
     with BATCH_CANCEL_LOCK:
         BATCH_CANCEL_REQUESTS.add(batch_id)
+    # Also kill whichever row is actively running right now, instead of
+    # only blocking rows that haven't started yet — otherwise Stop does
+    # nothing visible for a batch with just one row (or when concurrency
+    # means every row is already in flight).
+    for job in db.list_jobs_by_batch(DB_PATH, batch_id):
+        if job["status"] == "running":
+            _kill_running_job(job["id"])
     return jsonify({"ok": True})
 
 

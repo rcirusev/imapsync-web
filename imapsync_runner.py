@@ -158,11 +158,17 @@ def parse_summary(log_text, returncode):
     }
 
 
-def run_imapsync(binary, job, password1, password2, log_fp, on_line):
+def run_imapsync(binary, job, password1, password2, log_fp, on_line, on_process=None):
     """
     Runs imapsync, writing every line to log_fp and calling on_line(line) for
     each one as it arrives (used to push SSE events). Returns
     (returncode, full_log_text, elapsed_seconds).
+
+    If given, on_process(proc) is called once with the live subprocess.Popen
+    right after it starts — lets a caller on another thread terminate/kill
+    it later (see app.py's _kill_running_job, used by a batch's Stop
+    button). Killing mid-transfer is safe to resume from for the same
+    reason a server crash mid-transfer is: imapsync itself is incremental.
     """
     secrets_dir = tempfile.mkdtemp(prefix="imapsync-web-secrets-")
     try:
@@ -183,7 +189,17 @@ def run_imapsync(binary, job, password1, password2, log_fp, on_line):
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1, env=child_env,
+            # New session/process group so a later kill (see app.py's
+            # _kill_running_job) can signal the whole group, not just this
+            # one PID — if imapsync (or whatever's on IMAPSYNC_BIN) ever
+            # shells out to a child of its own, signaling only the direct
+            # child would leave that grandchild running, holding this
+            # pipe's write end open, and our read loop below blocked until
+            # it finishes on its own regardless of being "killed".
+            start_new_session=True,
         )
+        if on_process:
+            on_process(proc)
         lines = []
         for line in proc.stdout:
             line = line.rstrip("\n")

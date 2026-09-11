@@ -349,9 +349,12 @@ same idea as an Exchange/Office 365 IMAP migration batch:
   mailboxes — status, message/error counts, per-row log — instead of
   scrolling through every job from every batch mixed together.
 - **Stop a running batch.** The **Stop** button (in the Bulk tab's console,
-  and next to any "Running" batch in History) halts a batch after whichever
-  row is currently in flight finishes — it does not kill a transfer
-  mid-flight, it just stops picking up new rows. The batch is then marked
+  and next to any "Running" batch in History) stops picking up any row
+  that hasn't started yet, and also terminates whichever row is currently
+  in flight right now — it doesn't wait for that transfer to finish on its
+  own. Killing mid-transfer is safe: `imapsync` is incremental, so
+  whatever already copied over stays copied, and re-running the same row
+  (**Retry rows**, below) just picks up the rest. The batch is then marked
   **Stopped**, distinct from a crash-induced **Interrupted**.
 - **Retry only the failed rows.** Once a batch has any errors, was stopped,
   or was interrupted, two ways to rerun just what still needs it (never the

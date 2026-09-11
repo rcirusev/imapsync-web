@@ -101,7 +101,30 @@ options only, never a password) — before any worker actually picks it up —
 specifically so a row still waiting its turn has a durable record if the
 process dies before its turn comes; `db.mark_started` promotes it to
 `running` when a worker finally gets to it. A row skipped by a Stop request
-is written straight to `interrupted` instead of vanishing.
+(not yet started) is written straight to `interrupted` instead of
+vanishing; a row already running gets its live `imapsync` subprocess
+actually killed (see below), which lands it at `interrupted` the normal
+way, through `_execute_job`'s own finish path.
+
+**Stop also kills whatever's actually running**, not just future rows —
+`RUNNING_PROCESSES` (job_id -> its live `subprocess.Popen`, set via
+`run_imapsync`'s `on_process` callback) and `KILL_REQUESTED` (job_ids
+`_execute_job` should report as `interrupted`/"Stopped by user request"
+rather than running the exit code through `parse_summary`, which has no
+idea a nonzero exit here means "we killed it") make this possible.
+`_kill_running_job` (called by both `bulk_stop` and, per-row, anywhere
+else that might need it later) signals the process's whole *group*, not
+just its PID — `run_imapsync` launches it with `start_new_session=True`
+specifically so this reaches any child it may have shelled out to, not
+only imapsync itself; skipping that would leave such a child running,
+holding the stdout pipe open, and the read loop blocked regardless of
+"killing" the direct child. SIGTERM first, SIGKILL after a 5s grace period
+if it's still alive. Because imapsync is incremental, killing mid-transfer
+is exactly as safe to resume from as a server crash mid-transfer already
+is (`_run_batch_thread`'s `stopped_early` — whether the batch itself ends
+up `stopped` vs. `done` — considers *either* a pre-start skip or Stop
+having been requested at all, since a single-row batch killed mid-flight
+never trips the pre-start-skip path on its own).
 
 On process startup, any job/batch still `running` or `queued` in the DB is
 relabeled `interrupted` (`db.mark_orphaned_running_as_interrupted` /
