@@ -809,14 +809,16 @@ def _auto_resume_interrupted_batches():
     stored to resume with, and is left exactly as before: retryable by hand
     via History -> Retry rows / Download failed CSV.
 
-    Skips any batch a delta-sync schedule still references (kind='batch') —
-    that schedule will re-run it on its own next tick regardless of this
-    sweep, so there's nothing for this to do there.
+    Runs regardless of whether a delta-sync schedule also references this
+    batch (kind='batch') — that schedule re-running it on its own next tick
+    (which could be hours away) is a *separate* concern from "this batch
+    was interrupted and should recover right now"; conflating the two used
+    to mean a batch with both checked wouldn't actually auto-resume until
+    the schedule's own timer came due. Only the *cleanup* below still
+    respects that schedule: it needs the original rows' credentials kept
+    indefinitely, so those are left alone instead of purged.
     """
     for batch in db.list_batches_by_status(DB_PATH, "interrupted"):
-        if db.get_schedule_by_ref(DB_PATH, "batch", batch["id"]):
-            continue
-
         pending = [
             j for j in db.list_jobs_by_batch(DB_PATH, batch["id"])
             if j["status"] in ("error", "interrupted")
@@ -844,7 +846,15 @@ def _auto_resume_interrupted_batches():
         # keep_passwords=True: if this auto-resumed batch also gets
         # interrupted, it can auto-resume again in turn.
         _launch_retry_batch(batch, rows, "auto-resumed", keep_passwords=True)
-        db.delete_credentials_many(DB_PATH, resumed_job_ids)
+
+        # The original rows' credentials just got handed off to the new
+        # batch above — redundant now, EXCEPT when a delta-sync schedule
+        # still references this exact batch_id, which needs them kept
+        # indefinitely for its own future re-runs (see _run_scheduled_batch,
+        # which reads credentials straight off this original batch's rows
+        # every time it fires).
+        if not db.get_schedule_by_ref(DB_PATH, "batch", batch["id"]):
+            db.delete_credentials_many(DB_PATH, resumed_job_ids)
 
 
 def _run_schedule(sched):

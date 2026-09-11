@@ -145,10 +145,20 @@ state (`_run_batch_thread`'s end, unless `db.get_schedule_by_ref(...,
 "batch", batch_id)` finds an active delta-sync schedule for that exact
 batch_id — that schedule owns the indefinite copy instead). On startup,
 right after the orphan-interrupt sweep, `_auto_resume_interrupted_batches`
-scans for `interrupted` batches with still-stored credentials and silently
-relaunches their pending rows via `_launch_retry_batch` — no user action.
-`db.clear_history` also purges any `credential_vault` row belonging to a
-job it deletes, so a manual history-clear can't orphan one.
+scans **every** `interrupted` batch with still-stored credentials and
+silently relaunches its pending rows via `_launch_retry_batch` — no user
+action, and *regardless* of whether a delta-sync schedule also references
+that batch. Whether a schedule is attached only affects the cleanup that
+follows: same as `_run_batch_thread`, the original rows' credentials are
+purged unless `get_schedule_by_ref` finds one, since that schedule needs
+them indefinitely for its own future re-runs. Conflating "should this
+resume now" with "does a schedule need these credentials forever" (both
+gated on the same schedule check) used to mean a batch with both "Auto-
+resume" and "Automatically re-run..." checked wouldn't actually resume
+until the schedule's own multi-hour timer came due — the two are
+orthogonal (recover-once vs. keep-re-running) and must stay decided
+separately. `db.clear_history` also purges any `credential_vault` row
+belonging to a job it deletes, so a manual history-clear can't orphan one.
 
 ### Security-relevant conventions (don't casually change)
 
