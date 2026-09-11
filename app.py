@@ -713,6 +713,99 @@ def _retry_batch_rows(batch, rows, keep_passwords):
     return True
 
 
+def _launch_staged_batch(batch):
+    """
+    Runs a batch that has been sitting staged (see bulk_start's `stage`
+    flag). Its rows' host/user/options come from the job rows written at
+    upload time and their passwords from the credential vault — the only
+    place they could live while the batch waited, since the uploaded CSV is
+    never written to disk.
+
+    The caller must already have won db.claim_staged_batch for this batch,
+    so both the Start button and the scheduler's due sweep can call this
+    without either being able to start the same batch twice.
+    """
+    jobs = db.list_jobs_by_batch(DB_PATH, batch["id"])
+    rows = []
+    for job in jobs:
+        creds = db.get_credentials(DB_PATH, job["id"])
+        if not creds:
+            continue  # nothing to log in with — skip rather than fail the whole batch
+        rows.append({
+            "host1": job["host1"], "port1": job["port1"], "ssl1": bool(job["ssl1"]),
+            "user1": job["user1"], "authuser1": job.get("authuser1") or None,
+            "password1": crypto_store.decrypt(creds["enc_password1"]),
+            "host2": job["host2"], "port2": job["port2"], "ssl2": bool(job["ssl2"]),
+            "user2": job["user2"], "authuser2": job.get("authuser2") or None,
+            "password2": crypto_store.decrypt(creds["enc_password2"]),
+            "options": json.loads(job["options_json"] or "{}"),
+            "_job_id": job["id"],  # reused, never a fresh id — see _retry_batch_rows
+        })
+
+    if not rows:
+        # claim_staged_batch has already flipped this batch to 'running', so
+        # bailing out silently would strand it there forever. Only reachable
+        # if the vault entries went missing under it (a manual DB edit, say)
+        # — there is nothing to log in with, so call it stopped and move on.
+        db.stop_batch(DB_PATH, batch["id"], time.time())
+        return False
+
+    max_concurrent = min(max(int(batch.get("max_concurrent") or 1), 1), MAX_BATCH_CONCURRENCY)
+    for row in rows:
+        db.reset_job_for_retry(DB_PATH, row["_job_id"])  # 'staged' -> 'queued'
+    db.recompute_batch_progress(DB_PATH, batch["id"])
+    with BATCHES_LOCK:
+        BATCHES[batch["id"]] = {"lines": [], "subscribers": [], "done": False}
+
+    threading.Thread(
+        target=_run_batch_thread, args=(batch["id"], rows),
+        kwargs={"max_concurrent": max_concurrent}, daemon=True,
+    ).start()
+    return True
+
+
+@app.route("/api/batches/<batch_id>/start", methods=["POST"])
+def batch_start(batch_id):
+    if not IMAPSYNC_BIN:
+        return jsonify({
+            "error": "imapsync binary not found on this server. Run install.sh, "
+                     "or set IMAPSYNC_BIN, then restart the service."
+        }), 503
+
+    batch = db.get_batch(DB_PATH, batch_id)
+    if not batch:
+        return jsonify({"error": "Unknown batch id."}), 404
+    if batch["status"] != "staged":
+        return jsonify({"error": "This batch isn't staged — it has already been started."}), 409
+    if not db.claim_staged_batch(DB_PATH, batch_id):
+        return jsonify({"error": "This batch has just been started elsewhere."}), 409
+
+    if not _launch_staged_batch(batch):
+        return jsonify({"error": "This batch has no rows left to run."}), 400
+    return jsonify({"batch_id": batch_id, "started": True})
+
+
+@app.route("/api/batches/<batch_id>", methods=["DELETE"])
+def batch_delete(batch_id):
+    """Discards a staged batch outright, credentials included. Only staged
+    batches — anything that actually ran belongs in history, where Clear
+    history decides when it goes."""
+    batch = db.get_batch(DB_PATH, batch_id)
+    if not batch:
+        return jsonify({"error": "Unknown batch id."}), 404
+    if batch["status"] != "staged":
+        return jsonify({"error": "Only a staged batch can be discarded."}), 409
+
+    for path in db.delete_batch(DB_PATH, batch_id):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    with BATCHES_LOCK:
+        BATCHES.pop(batch_id, None)
+    return jsonify({"batch_id": batch_id, "deleted": True})
+
+
 @app.route("/api/bulk/template")
 def bulk_template():
     return Response(
@@ -746,6 +839,21 @@ def bulk_start():
         max_concurrent = 1
     max_concurrent = min(max(max_concurrent, 1), MAX_BATCH_CONCURRENCY)
 
+    # "Stage for later": park the batch instead of running it now, either
+    # until someone presses Start or until start_at arrives (the scheduler
+    # loop picks it up). A staged batch necessarily stores its rows'
+    # passwords encrypted — there is nowhere else for them to live while it
+    # waits, since the uploaded CSV is never written to disk — so staging
+    # implies the same "keep resumable" handling a running batch opts into,
+    # and the UI says so.
+    stage = (request.form.get("stage") or "").lower() in ("1", "true", "yes", "on")
+    start_at = None
+    if stage and request.form.get("start_at"):
+        try:
+            start_at = float(request.form["start_at"])
+        except ValueError:
+            return jsonify({"error": "Invalid start time."}), 400
+
     # Assigned up front (rather than lazily inside _run_batch_thread) so
     # scheduled-delta-sync credentials, stored synchronously below, are
     # keyed to the exact same ids each row's job will use once the
@@ -754,7 +862,10 @@ def bulk_start():
         row["_job_id"] = str(uuid.uuid4())
 
     batch_id = str(uuid.uuid4())
-    db.create_batch(DB_PATH, batch_id, len(rows), time.time(), name=name, max_concurrent=max_concurrent)
+    db.create_batch(
+        DB_PATH, batch_id, len(rows), time.time(), name=name, max_concurrent=max_concurrent,
+        status="staged" if stage else "running", start_at=start_at,
+    )
     with BATCHES_LOCK:
         BATCHES[batch_id] = {"lines": [], "subscribers": [], "done": False}
 
@@ -766,10 +877,15 @@ def bulk_start():
     # row's host/user would simply be gone, forcing a full CSV re-upload
     # instead of just "Download failed CSV" picking it up like any other
     # interrupted row (see mark_orphaned_running_as_interrupted).
+    # A staged batch's rows get their own status rather than "queued", so
+    # the startup orphan sweep (which relabels every running/queued row
+    # "interrupted", since nothing can still be running after a restart)
+    # leaves them alone — a staged batch is *supposed* to survive a restart
+    # untouched and still be waiting afterwards.
     for row in rows:
         db.create_job(
             DB_PATH, _new_job_dict(row, job_id=row["_job_id"]),
-            batch_id=batch_id, status="queued",
+            batch_id=batch_id, status="staged" if stage else "queued",
         )
 
     # Opt-in: keep every row's password encrypted in the vault (same
@@ -781,7 +897,7 @@ def bulk_start():
     # moment the batch finishes either way — see the end of
     # _run_batch_thread.
     keep_passwords = (request.form.get("keep_passwords") or "").lower() in ("1", "true", "yes", "on")
-    if keep_passwords:
+    if keep_passwords or stage:
         now = time.time()
         for row in rows:
             db.store_credentials(
@@ -795,6 +911,12 @@ def bulk_start():
         if interval_hours > 0:
             pairs = [(row["_job_id"], row["password1"], row["password2"]) for row in rows]
             _enable_delta_sync("batch", batch_id, interval_hours, pairs)
+
+    if stage:
+        return jsonify({
+            "batch_id": batch_id, "total": len(rows), "row_errors": row_errors,
+            "staged": True, "start_at": start_at,
+        })
 
     threading.Thread(
         target=_run_batch_thread, args=(batch_id, rows), kwargs={"max_concurrent": max_concurrent}, daemon=True
@@ -1062,6 +1184,16 @@ def _run_schedule(sched):
         db.touch_schedule_run(DB_PATH, sched["id"], time.time())
 
 
+def _start_due_staged_batches():
+    """A staged batch given a start time (see bulk_start) is launched from
+    here once that time arrives. claim_staged_batch is the compare-and-swap
+    that keeps this from racing the Start button — whichever gets there
+    first wins, the other sees the batch already running."""
+    for batch in db.list_due_staged_batches(DB_PATH, time.time()):
+        if db.claim_staged_batch(DB_PATH, batch["id"]):
+            _launch_staged_batch(batch)
+
+
 def _scheduler_loop():
     while True:
         time.sleep(60)
@@ -1071,6 +1203,10 @@ def _scheduler_loop():
             due = []
         for sched in due:
             threading.Thread(target=_run_schedule, args=(sched,), daemon=True).start()
+        try:
+            _start_due_staged_batches()
+        except Exception:  # noqa: BLE001 — same: never let one bad batch kill the loop
+            pass
 
 
 @app.route("/api/schedules")

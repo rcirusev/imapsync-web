@@ -307,6 +307,27 @@ The CSV is parsed entirely in memory and is never written to disk — same
 password handling as a single migration (see below), just once per row
 instead of once per click.
 
+### Uploading a batch now and running it later
+
+Next to **Start bulk migration** there's **Stage for later**. It does
+everything except run the batch: the CSV is parsed, the rows are validated
+and written down, and the batch appears in **History → Bulk batches** with
+status **Staged** and two buttons — **Start now** and **Discard**. Nothing
+touches a mail server until you say so.
+
+Fill in **Start automatically at** before staging and it starts itself at
+that time instead — handy for putting the batch together during the day and
+letting it run at night. Leave it blank for a purely manual start. Either
+way the batch survives a service restart and is still sitting there
+afterwards, waiting.
+
+One thing to be aware of: a staged batch **keeps its rows' passwords
+encrypted** while it waits. There is nowhere else for them to live — the
+CSV itself is never saved — so this is the same encrypted vault that
+delta sync and "Keep resumable" use (see Security notes). They're deleted
+when the batch finishes, or immediately if you **Discard** it, which also
+removes the batch and its rows entirely.
+
 ### Tracking a large batch (e.g. 100 mailboxes)
 
 While the Bulk tab is open, you already get a live progress line (which row

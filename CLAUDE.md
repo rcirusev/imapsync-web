@@ -260,6 +260,36 @@ right after a retry resets it, or most of a large batch waiting its turn)
 didn't count, so a very fast retry could visibly get stuck on a stale
 status until the user hit Refresh by hand. It now also counts `queued`.
 
+### Staged batches (upload now, run later)
+
+`bulk_start`'s `stage` flag parks a batch instead of running it: the batch
+row and every job row are written with status **`staged`**, and nothing is
+launched. It sits there until either someone presses Start
+(`/api/batches/<id>/start`) or its optional `batches.start_at` arrives and
+`_scheduler_loop`'s `_start_due_staged_batches` picks it up. Both paths go
+through `db.claim_staged_batch`, a compare-and-swap `UPDATE ... WHERE
+status = 'staged'` — so the Start button and an automatic start firing in
+the same second can't launch the same batch twice. `_launch_staged_batch`
+then rebuilds the rows from their job records plus the credential vault
+and hands them to `_run_batch_thread` like any other run.
+
+Two consequences worth keeping in mind when touching this:
+
+- **`staged` is deliberately not `queued`.** The startup orphan sweep
+  relabels every `running`/`queued` row `interrupted`, on the sound
+  assumption that nothing can still be running after a restart. A staged
+  batch is supposed to survive a restart and still be waiting afterwards,
+  which only works because its rows sit outside that sweep's reach.
+  `db.clear_history` likewise skips `staged` — it is pending work, not
+  history.
+- **Staging always stores passwords** (encrypted, `credential_vault`) —
+  a third case alongside delta sync and the auto-resume checkbox. There is
+  nowhere else for them to live while the batch waits, since the uploaded
+  CSV is never written to disk. They are purged the usual way once the
+  batch finishes, or immediately if the batch is discarded
+  (`/api/batches/<id>` DELETE → `db.delete_batch`, which also removes the
+  job rows and their logs; staged batches only).
+
 ### Scheduled delta sync
 
 `_enable_delta_sync` encrypts and stores credentials in `credential_vault`
@@ -308,12 +338,14 @@ belonging to a job it deletes, so a manual history-clear can't orphan one.
 ### Security-relevant conventions (don't casually change)
 
 - **Passwords are never persisted except in `credential_vault`, and only
-  for the two explicit opt-ins above** (scheduled delta sync; a batch's
-  auto-resume checkbox, purged once that batch finishes). Every other
-  password is written to a `0600` temp file for imapsync's
-  `--passfile1/2` flags (never on the command line, never in logs/DB) and
-  deleted immediately after the process exits
-  (`imapsync_runner.run_imapsync`).
+  for the three cases above**: scheduled delta sync (indefinite, until the
+  schedule is deleted); a batch's auto-resume checkbox (until that batch
+  finishes); and a staged batch (until it runs or is discarded — unlike
+  the other two this isn't optional, since a batch that waits has nowhere
+  else to hold its rows' passwords). Every other password is written to a
+  `0600` temp file for imapsync's `--passfile1/2` flags (never on the
+  command line, never in logs/DB) and deleted immediately after the
+  process exits (`imapsync_runner.run_imapsync`).
 - **CSRF header check** (`app.py::_require_csrf_header`): every non-GET
   request must carry `X-Requested-With: imapsync-web` (sent by
   `static/js/app.js`), since Basic Auth alone doesn't stop cross-site state

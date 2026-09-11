@@ -49,10 +49,11 @@ CREATE TABLE IF NOT EXISTS batches (
     completed      INTEGER NOT NULL DEFAULT 0,
     success        INTEGER NOT NULL DEFAULT 0,
     error          INTEGER NOT NULL DEFAULT 0,
-    status         TEXT NOT NULL,   -- running | done | interrupted | stopped
+    status         TEXT NOT NULL,   -- staged | running | done | interrupted | stopped
     finished_at    REAL,
     name           TEXT,
-    max_concurrent INTEGER NOT NULL DEFAULT 1
+    max_concurrent INTEGER NOT NULL DEFAULT 1,
+    start_at       REAL             -- staged batches only: automatic start time
 );
 CREATE INDEX IF NOT EXISTS idx_batches_created_at ON batches (created_at DESC);
 
@@ -154,6 +155,13 @@ def init_db(db_path):
         conn.commit()
     except sqlite3.OperationalError:
         pass  # column already exists
+    # ...and for start_at: a staged batch's optional automatic start time
+    # (epoch seconds). NULL means "waits for someone to press Start".
+    try:
+        conn.execute("ALTER TABLE batches ADD COLUMN start_at REAL")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
 
 
 def create_job(db_path, job, batch_id=None, schedule_id=None, status="running"):
@@ -202,14 +210,66 @@ def mark_orphaned_running_as_interrupted(db_path):
     conn.commit()
 
 
-def create_batch(db_path, batch_id, total, created_at, name=None, schedule_id=None, max_concurrent=1):
+def create_batch(db_path, batch_id, total, created_at, name=None, schedule_id=None,
+                 max_concurrent=1, status="running", start_at=None):
     conn = get_conn(db_path)
     conn.execute(
-        """INSERT INTO batches (id, created_at, total, completed, success, error, status, name, schedule_id, max_concurrent)
-           VALUES (?, ?, ?, 0, 0, 0, 'running', ?, ?, ?)""",
-        (batch_id, created_at, total, name or None, schedule_id, max_concurrent),
+        """INSERT INTO batches (id, created_at, total, completed, success, error, status, name,
+                                schedule_id, max_concurrent, start_at)
+           VALUES (?, ?, ?, 0, 0, 0, ?, ?, ?, ?, ?)""",
+        (batch_id, created_at, total, status, name or None, schedule_id, max_concurrent, start_at),
     )
     conn.commit()
+
+
+def claim_staged_batch(db_path, batch_id):
+    """
+    Flips a batch from 'staged' to 'running' and returns True only for the
+    caller that actually made that transition. Both the Start button and
+    the scheduler's own due-batch sweep go through here, so a batch whose
+    automatic start time arrives at the same moment someone presses Start
+    can only ever be launched once — the UPDATE's WHERE clause is the
+    compare-and-swap, the same trick claim_due_schedules uses.
+    """
+    conn = get_conn(db_path)
+    cur = conn.execute(
+        "UPDATE batches SET status = 'running', start_at = NULL WHERE id = ? AND status = 'staged'",
+        (batch_id,),
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def list_due_staged_batches(db_path, now):
+    """Staged batches whose automatic start time has arrived. Claiming each
+    one (claim_staged_batch) is a separate step, so this can be read without
+    a lock."""
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        """SELECT * FROM batches
+           WHERE status = 'staged' AND start_at IS NOT NULL AND start_at <= ?
+           ORDER BY start_at""",
+        (now,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_batch(db_path, batch_id):
+    """Removes a batch outright, along with its job rows, their logs' DB
+    records and any stored credentials. Only meant for a batch that never
+    ran (staged) — a batch with real results belongs in history, where
+    clear_history decides its fate instead. Returns the deleted jobs'
+    log paths so the caller can delete the files."""
+    conn = get_conn(db_path)
+    jobs = conn.execute("SELECT id, log_path FROM jobs WHERE batch_id = ?", (batch_id,)).fetchall()
+    job_ids = [j["id"] for j in jobs]
+    if job_ids:
+        marks = ",".join("?" * len(job_ids))
+        conn.execute(f"DELETE FROM credential_vault WHERE job_id IN ({marks})", job_ids)
+        conn.execute(f"DELETE FROM jobs WHERE id IN ({marks})", job_ids)
+    conn.execute("DELETE FROM batches WHERE id = ?", (batch_id,))
+    conn.commit()
+    return [j["log_path"] for j in jobs if j["log_path"]]
 
 
 def stop_batch(db_path, batch_id, finished_at):
@@ -373,11 +433,13 @@ def clear_history(db_path):
     """
     Deletes finished single migrations and bulk batches from history.
 
-    Never touches anything currently running, and never touches a job/batch
-    that an active delta-sync schedule still needs to re-run (a job-kind
-    schedule's own job, or every job belonging to a batch-kind schedule's
-    batch) — deleting those out from under an active schedule would make
-    its next automatic run silently find nothing and do nothing.
+    Never touches anything currently running or still staged (uploaded but
+    not started yet — that is work waiting to happen, not history), and
+    never touches a job/batch that an active delta-sync schedule still
+    needs to re-run (a job-kind schedule's own job, or every job belonging
+    to a batch-kind schedule's batch) — deleting those out from under an
+    active schedule would make its next automatic run silently find nothing
+    and do nothing.
 
     Returns {"jobs_deleted": n, "batches_deleted": n, "log_paths": [...]}
     — the caller is responsible for removing the log files at log_paths.
@@ -389,19 +451,19 @@ def clear_history(db_path):
     protected_job_ids = {s["ref_id"] for s in schedules if s["kind"] == "job"}
 
     all_batches = conn.execute("SELECT id, status FROM batches").fetchall()
-    running_batch_ids = {b["id"] for b in all_batches if b["status"] == "running"}
-    keep_batch_ids = protected_batch_ids | running_batch_ids
+    active_batch_ids = {b["id"] for b in all_batches if b["status"] in ("running", "staged")}
+    keep_batch_ids = protected_batch_ids | active_batch_ids
 
     all_jobs = conn.execute("SELECT id, batch_id, status, log_path FROM jobs").fetchall()
     jobs_to_delete = [
         j for j in all_jobs
-        if j["status"] != "running"
+        if j["status"] not in ("running", "staged")
         and j["id"] not in protected_job_ids
         and (not j["batch_id"] or j["batch_id"] not in keep_batch_ids)
     ]
     batches_to_delete = [
         b for b in all_batches
-        if b["status"] != "running" and b["id"] not in protected_batch_ids
+        if b["status"] not in ("running", "staged") and b["id"] not in protected_batch_ids
     ]
 
     job_ids = [j["id"] for j in jobs_to_delete]

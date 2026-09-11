@@ -285,12 +285,25 @@
       <div class="bulk-upload-row">
         <input type="file" id="bulk-file" accept=".csv,text/csv">
         <button type="button" id="bulk-start-btn" class="btn btn-primary">Start bulk migration</button>
+        <button type="button" id="bulk-stage-btn" class="btn btn-ghost">Stage for later</button>
       </div>
       <p class="field-hint">
         The file is parsed in memory and never saved to disk. Passwords are
         held only for as long as each row's own migration is running, exactly
         like a single migration.
       </p>
+      <label class="field field-start-at">
+        <span>Start automatically at <span class="field-hint-inline">(optional)</span></span>
+        <input type="datetime-local" id="bulk-start-at">
+      </label>
+      <p class="field-hint">
+        Only applies to "Stage for later" — leave it blank to start the batch
+        by hand from History → Bulk batches. A staged batch keeps its rows'
+        passwords encrypted while it waits (it has nowhere else to hold them —
+        the CSV itself is never saved), and drops them once the batch
+        finishes. Discard the batch to delete them sooner.
+      </p>
+      <div id="bulk-staged-note" class="banner banner-ok" hidden></div>
       <div id="bulk-row-errors" class="banner banner-warning" hidden></div>
     </section>
 
@@ -410,6 +423,7 @@
         <input type="search" id="batches-search" class="filter-input" placeholder="Search by batch name…">
         <select id="batches-status-filter" class="filter-select">
           <option value="all">All statuses</option>
+          <option value="staged">Staged</option>
           <option value="running">Running</option>
           <option value="done">Done</option>
           <option value="interrupted">Interrupted</option>

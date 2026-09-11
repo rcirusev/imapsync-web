@@ -343,6 +343,9 @@
   // ---- Bulk migration (CSV) ----
   const bulkFile = document.getElementById("bulk-file");
   const bulkStartBtn = document.getElementById("bulk-start-btn");
+  const bulkStageBtn = document.getElementById("bulk-stage-btn");
+  const bulkStartAtInput = document.getElementById("bulk-start-at");
+  const bulkStagedNote = document.getElementById("bulk-staged-note");
   const bulkRowErrors = document.getElementById("bulk-row-errors");
   const bulkProgressCard = document.getElementById("bulk-progress-card");
   const bulkProgressLabel = document.getElementById("bulk-progress-label");
@@ -416,6 +419,75 @@
     });
   });
 
+  // Both upload buttons post the same multipart form to the same endpoint;
+  // `stage` is the only difference. Staged means the server writes the rows
+  // and parks them (status "staged") instead of running them — so there is
+  // no stream to open and no progress card to show, just a confirmation.
+  function buildBulkFormData(file, stage) {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("name", bulkBatchNameInput.value.trim());
+    formData.append("max_concurrent", bulkMaxConcurrentInput.value || "1");
+    formData.append("keep_passwords", bulkKeepPasswordsCheckbox.checked ? "true" : "false");
+    formData.append("schedule_enabled", bulkScheduleEnabledCheckbox.checked ? "true" : "false");
+    formData.append("schedule_interval_hours", bulkScheduleIntervalInput.value || "0");
+    if (stage) {
+      formData.append("stage", "true");
+      // datetime-local has no timezone, so it parses as local time — which
+      // is what someone typing "22:00" means. The server only ever sees the
+      // resulting epoch seconds.
+      if (bulkStartAtInput.value) {
+        formData.append("start_at", String(new Date(bulkStartAtInput.value).getTime() / 1000));
+      }
+    }
+    return formData;
+  }
+
+  bulkStageBtn.addEventListener("click", () => {
+    const file = bulkFile.files[0];
+    if (!file) {
+      bulkRowErrors.hidden = false;
+      bulkRowErrors.textContent = "Choose a CSV file first.";
+      return;
+    }
+
+    bulkRowErrors.hidden = true;
+    bulkStagedNote.hidden = true;
+    bulkStageBtn.disabled = true;
+    bulkStageBtn.textContent = "Staging…";
+
+    fetch("/api/bulk/start", {
+      method: "POST", headers: CSRF_HEADERS, body: buildBulkFormData(file, true),
+    })
+      .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+      .then(({ ok, body }) => {
+        if (!ok) throw new Error(body.error || "Failed to stage the batch");
+        if (body.row_errors && body.row_errors.length) {
+          bulkRowErrors.hidden = false;
+          bulkRowErrors.innerHTML =
+            `<strong>${body.row_errors.length} row(s) skipped:</strong><br>` +
+            body.row_errors.map((e) => `Row ${e.row}: ${e.reason}`).join("<br>");
+        }
+        const when = body.start_at
+          ? `It starts automatically at ${new Date(body.start_at * 1000).toLocaleString()}.`
+          : "Start it from History → Bulk batches whenever you're ready.";
+        bulkStagedNote.hidden = false;
+        bulkStagedNote.innerHTML =
+          `<strong>Staged ${body.total} row(s).</strong> ${escapeHtml(when)}`;
+        bulkFile.value = "";
+        bulkStartAtInput.value = "";
+        loadBatches();
+      })
+      .catch((err) => {
+        bulkRowErrors.hidden = false;
+        bulkRowErrors.textContent = "ERROR: " + err.message;
+      })
+      .finally(() => {
+        bulkStageBtn.disabled = false;
+        bulkStageBtn.textContent = "Stage for later";
+      });
+  });
+
   bulkStartBtn.addEventListener("click", () => {
     const file = bulkFile.files[0];
     if (!file) {
@@ -425,6 +497,7 @@
     }
 
     bulkRowErrors.hidden = true;
+    bulkStagedNote.hidden = true;
     bulkResultsCard.hidden = true;
     bulkResultsBody.innerHTML = "";
     bulkProgressCard.hidden = false;
@@ -440,15 +513,9 @@
     bulkStopBtn.disabled = false;
     bulkStopBtn.textContent = "Stop batch";
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("name", bulkBatchNameInput.value.trim());
-    formData.append("max_concurrent", bulkMaxConcurrentInput.value || "1");
-    formData.append("keep_passwords", bulkKeepPasswordsCheckbox.checked ? "true" : "false");
-    formData.append("schedule_enabled", bulkScheduleEnabledCheckbox.checked ? "true" : "false");
-    formData.append("schedule_interval_hours", bulkScheduleIntervalInput.value || "0");
-
-    fetch("/api/bulk/start", { method: "POST", headers: CSRF_HEADERS, body: formData })
+    fetch("/api/bulk/start", {
+      method: "POST", headers: CSRF_HEADERS, body: buildBulkFormData(file, false),
+    })
       .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
       .then(({ ok, body }) => {
         if (!ok) throw new Error(body.error || "Failed to start bulk migration");
@@ -631,10 +698,11 @@
   });
 
   const STATUS_LABEL = {
-    queued: "Queued", running: "Running", success: "Completed", error: "Failed", interrupted: "Interrupted",
+    staged: "Staged", queued: "Queued", running: "Running", success: "Completed",
+    error: "Failed", interrupted: "Interrupted",
   };
   const BATCH_STATUS_LABEL = {
-    running: "Running", done: "Done", interrupted: "Interrupted", stopped: "Stopped",
+    staged: "Staged", running: "Running", done: "Done", interrupted: "Interrupted", stopped: "Stopped",
   };
 
   // While the History tab is open and at least one job/batch is "running",
@@ -851,15 +919,21 @@
       const badgeStatus = batch.status === "done" ? "success" : batch.status;
       const displayName = batch.name || `Batch ${batch.id.slice(0, 8)}`;
       const canRetry = batch.error > 0 || batch.status === "interrupted" || batch.status === "stopped";
+      const isStaged = batch.status === "staged";
+      const startsAt = isStaged && batch.start_at
+        ? `<div class="batch-starts-at">starts ${new Date(batch.start_at * 1000).toLocaleString()}</div>`
+        : "";
       tr.innerHTML = `
         <td class="nowrap">${started}</td>
-        <td>${escapeHtml(displayName)}${batch.schedule_id ? ' <span class="bulk-tag">auto</span>' : ""}</td>
+        <td>${escapeHtml(displayName)}${batch.schedule_id ? ' <span class="bulk-tag">auto</span>' : ""}${startsAt}</td>
         <td class="nowrap">${batch.completed}/${batch.total}</td>
         <td class="nowrap">${batch.success}</td>
         <td class="nowrap">${batch.error}</td>
         <td class="nowrap"><span class="status-badge status-${badgeStatus}">${BATCH_STATUS_LABEL[batch.status] || batch.status}</span></td>
         <td><div class="history-actions">
           <button class="btn btn-ghost btn-small" data-view-batch="${batch.id}">View rows</button>
+          ${isStaged ? `<button class="btn btn-ghost btn-small" data-start-batch="${batch.id}">Start now</button>` : ""}
+          ${isStaged ? `<button class="btn btn-ghost btn-small" data-delete-batch="${batch.id}">Discard</button>` : ""}
           ${batch.status === "running" ? `<button class="btn btn-ghost btn-small" data-stop-batch="${batch.id}">Stop</button>` : ""}
           ${canRetry ? `<button class="btn btn-ghost btn-small" data-retry-batch="${batch.id}">Retry rows</button>` : ""}
           ${canRetry ? `<a class="link-muted" href="/api/batches/${batch.id}/failed.csv" title="Alternative to Retry rows: a CSV with these rows' host/user/options, for editing in a spreadsheet or handing off">or CSV</a>` : ""}
@@ -881,6 +955,47 @@
     });
     batchesBody.querySelectorAll("button[data-retry-batch]").forEach((btn) => {
       btn.addEventListener("click", () => openRetryModal(btn.closest("tr")._batch));
+    });
+    batchesBody.querySelectorAll("button[data-start-batch]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        btn.disabled = true;
+        btn.textContent = "Starting…";
+        fetch(`/api/batches/${btn.dataset.startBatch}/start`, { method: "POST", headers: CSRF_HEADERS })
+          .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+          .then(({ ok, body }) => {
+            if (!ok) throw new Error(body.error || "Failed to start the batch");
+            loadBatches();
+            loadHistory();
+          })
+          .catch((err) => {
+            alert(err.message);
+            btn.disabled = false;
+            btn.textContent = "Start now";
+          });
+      });
+    });
+    batchesBody.querySelectorAll("button[data-delete-batch]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const batch = btn.closest("tr")._batch;
+        const label = batch.name || `Batch ${batch.id.slice(0, 8)}`;
+        if (!confirm(`Discard "${label}"? Its ${batch.total} row(s) and their stored passwords are deleted — nothing has run yet.`)) {
+          return;
+        }
+        btn.disabled = true;
+        btn.textContent = "Discarding…";
+        fetch(`/api/batches/${batch.id}`, { method: "DELETE", headers: CSRF_HEADERS })
+          .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+          .then(({ ok, body }) => {
+            if (!ok) throw new Error(body.error || "Failed to discard the batch");
+            loadBatches();
+            loadHistory();
+          })
+          .catch((err) => {
+            alert(err.message);
+            btn.disabled = false;
+            btn.textContent = "Discard";
+          });
+      });
     });
   }
 
@@ -971,6 +1086,9 @@
     const standaloneJobs = [];
     const batchGroups = new Map();
     jobs.forEach((job) => {
+      // A staged batch hasn't run yet — it belongs in Bulk batches (where it
+      // can be started or discarded), not in a list of what has happened.
+      if (job.status === "staged") return;
       const batch = job.batch_id && allBatches.find((b) => b.id === job.batch_id);
       if (!batch) {
         standaloneJobs.push(job);
@@ -1018,7 +1136,10 @@
         // otherwise those rows show individually until history's own next
         // poll happens to land after this one.
         if (allJobs.length) renderHistory();
-        const anyRunning = batches.some((b) => b.status === "running");
+        // Staged batches count too: one with a start time set will flip to
+        // running on its own, and this is what notices that happening
+        // instead of leaving a stale "Staged" row until a manual refresh.
+        const anyRunning = batches.some((b) => b.status === "running" || b.status === "staged");
         if (anyRunning && historyTabVisible) {
           batchesPollTimer = setTimeout(loadBatches, 4000);
         }
@@ -1039,7 +1160,11 @@
         // waiting its turn (e.g. most of a large bulk batch, or the brief
         // moment right after a retry resets it) will become "running" and
         // then settle shortly, and this is what notices that happening.
-        const anyRunning = jobs.some((j) => j.status === "running" || j.status === "queued");
+        // A staged batch counts too even though none of its rows are active
+        // yet: it can start itself at its set time, and without this the
+        // finished rows wouldn't show up here until a manual refresh.
+        const anyRunning = jobs.some((j) => j.status === "running" || j.status === "queued")
+          || allBatches.some((b) => b.status === "running" || b.status === "staged");
         if (anyRunning && historyTabVisible) {
           historyPollTimer = setTimeout(loadHistory, 4000);
         }
