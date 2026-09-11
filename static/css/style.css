@@ -117,6 +117,13 @@
   --status-warning: #b45309;
   --status-serious: #c2410c;
   --status-critical:#be123c;
+  /* Staged gets its own yellow rather than reusing --status-warning: the
+     two sit next to each other in Bulk batches, and "waiting to be
+     started" must not read as "something went wrong". The tint carries
+     the yellow (a yellow dark enough to read as text stops looking
+     yellow), the text colour only has to stay legible on it. */
+  --status-staged:      #854d0e;
+  --status-staged-tint: #fde047;
 
   /* The console stays dark in both themes — it is raw process output. */
   --console-surface: #101f24;
@@ -152,9 +159,11 @@
   --on-accent:      #062a27;
 
   --status-good:    #4ade80;
-  --status-warning: #fbbf24;
-  --status-serious: #fb923c;
+  --status-warning: #fb923c;
+  --status-serious: #fdba74;
   --status-critical:#fb7185;
+  --status-staged:      #fde68a;
+  --status-staged-tint: #a16207;
 }
 
 * { box-sizing: border-box; }
@@ -607,9 +616,13 @@ legend {
 
 .status-idle    { color: var(--text-muted); background: var(--surface-2); }
 .status-queued  { color: var(--text-muted); background: var(--surface-2); }
-/* Staged reads as "deliberately waiting", so it carries the accent — but
-   outlined rather than filled, to stay clearly apart from Running. */
-.status-staged  { color: var(--series-1); background: transparent; box-shadow: inset 0 0 0 1px var(--series-1); }
+/* Yellow, and outlined on top of that, so "waiting to be started" stays
+   distinct from Interrupted sitting a row away in the same table. */
+.status-staged  {
+  color: var(--status-staged);
+  background: color-mix(in srgb, var(--status-staged-tint) 45%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-staged-tint) 75%, transparent);
+}
 .status-running { color: var(--series-1); background: var(--accent-wash); }
 .status-success { color: var(--status-good); background: color-mix(in srgb, var(--status-good) 10%, transparent); }
 .status-error   { color: var(--status-critical); background: color-mix(in srgb, var(--status-critical) 10%, transparent); }
