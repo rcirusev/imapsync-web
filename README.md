@@ -258,17 +258,20 @@ is silently lost, but that specific run never got a final result.
 To continue, an Interrupted (or Failed) row in History gets one of two
 buttons: if it still has a password stored (from Auto-resume — e.g. it was
 killed via a batch's Stop button rather than lost to a crash),
-**Resume now** re-launches it immediately, reusing that password — one
-click, nothing to retype. Otherwise, **Resume** re-fills the New migration
-form with that job's exact host/port/SSL/username/options — you only need
-to re-type the two passwords, since those aren't kept around normally —
-then click **Start migration** again. Neither is a checkpoint/resume
-feature this app built; both rely on `imapsync` itself being incremental:
-it checks what already exists on the destination and only transfers what's
-missing, so re-running the same migration doesn't re-copy anything that
-already made it across. This is also the right way to periodically re-sync
-an account (e.g. run it again a day later to pick up new mail) — same
-buttons, same idea.
+**Resume now** re-launches it **in place** — same row, log appended to
+(not replaced), reusing that password — one click, nothing to retype, and
+nothing new added to History. Otherwise, **Resume** re-fills the New
+migration form with that job's exact host/port/SSL/username/options — you
+only need to re-type the two passwords, since those aren't kept around
+normally — then click **Start migration** again, which (unlike "Resume
+now") does start a genuinely new row, since typing fresh passwords into
+the form is effectively a new migration attempt. Neither is a
+checkpoint/resume feature this app built; both rely on `imapsync` itself
+being incremental: it checks what already exists on the destination and
+only transfers what's missing, so re-running the same migration doesn't
+re-copy anything that already made it across. This is also the right way
+to periodically re-sync an account (e.g. run it again a day later to pick
+up new mail) — same buttons, same idea.
 
 ## Bulk migration from a CSV file
 
@@ -330,11 +333,13 @@ mid-batch** was checked when the batch was started:
 
 - **Checked:** every still-pending row's password was kept encrypted for
   exactly this. On the very next startup, before anything else, this app
-  automatically launches a new batch with just those rows — no one needs to
-  do anything. Those temporary passwords are deleted the moment that new
-  batch itself finishes (or, sooner, the moment `clear_history` removes the
-  row). If a delta-sync schedule is also attached to the batch, this is
-  skipped — that schedule already re-runs it on its own on its usual timer.
+  automatically re-runs those specific rows **in place** — same batch, no
+  one needs to do anything, and History doesn't grow a new entry for it.
+  Those temporary passwords are deleted the moment the batch next finishes
+  (or, sooner, the moment `clear_history` removes the row). If a
+  delta-sync schedule is also attached to the batch, it still resumes
+  immediately regardless — that schedule re-running it later, on its own
+  timer, is a separate thing.
 - **Unchecked (the default):** nothing was kept, so nothing can resume on
   its own. Use **Retry rows** or **Download failed CSV** (see Batches
   below) by hand to get every row that still needs a rerun — started or
@@ -365,9 +370,10 @@ same idea as an Exchange/Office 365 IMAP migration batch:
   whole original file) show up next to it in History → Bulk batches:
     - **Retry rows** opens those rows right in the browser — host/source
       shown per row, a password field for each, **Retry selected rows**
-      starts a new batch with them. Nothing ever touches a file; the
-      passwords go straight from that form to the new batch, the same as
-      any password field in this app. A row tagged **"saved password"**
+      re-runs them **in place** (same batch, same rows — nothing new added
+      to History). Nothing ever touches a file; the passwords go straight
+      from that form to the retry, the same as any password field in this
+      app. A row tagged **"saved password"**
       (it still has one stored from Auto-resume, e.g. it was killed via
       Stop rather than lost to a crash) can be left blank to reuse it
       instead of retyping it — and the modal's own "Auto-resume this retry

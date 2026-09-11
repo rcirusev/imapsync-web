@@ -315,8 +315,21 @@ def _execute_job(job, password1, password2):
         with RUNNING_PROCESSES_LOCK:
             RUNNING_PROCESSES[job_id] = proc
 
+    log_path = job["log_path"]
+    # Append, not overwrite: a retry reuses this same job id (and so this
+    # same log file — see db.reset_job_for_retry), so a previous attempt's
+    # output stays readable as part of one continuous story instead of
+    # being silently discarded. A brand new job's log file doesn't exist
+    # yet, so this is identical to starting fresh either way.
+    is_retry = os.path.isfile(log_path) and os.path.getsize(log_path) > 0
+
     try:
-        with open(job["log_path"], "w") as log_fp:
+        with open(log_path, "a") as log_fp:
+            if is_retry:
+                marker = f"--- Resumed {time.strftime('%Y-%m-%d %H:%M:%S')} ---"
+                log_fp.write(marker + "\n")
+                log_fp.flush()
+                on_line(marker)
             returncode, full_text, elapsed = runner.run_imapsync(
                 IMAPSYNC_BIN, job, password1, password2, log_fp, on_line, on_process=on_process
             )
@@ -441,13 +454,15 @@ def start():
 @app.route("/api/jobs/<job_id>/retry", methods=["POST"])
 def job_retry(job_id):
     """
-    Re-runs a single interrupted/failed job in place — the single-job
-    equivalent of a batch's "Retry rows" (see batch_retry): host/port/SSL/
-    username/options are pulled back out of this job's own DB record;
-    password falls back to a still-stored "auto-resume" credential (see
-    has_stored_password on /api/jobs) if the client doesn't supply one,
-    same as any other password field in this app otherwise — sent once,
-    never written to a file.
+    Re-runs a single interrupted/failed job — same id, same log file
+    (appended to, not overwritten — see _execute_job) — instead of
+    creating a new job row, so History keeps one row per mailbox across
+    retries. The single-job equivalent of a batch's "Retry rows" (see
+    batch_retry): host/port/SSL/username/options are pulled back out of
+    this job's own DB record; password falls back to a still-stored
+    "auto-resume" credential (see has_stored_password on /api/jobs) if the
+    client doesn't supply one, same as any other password field in this
+    app otherwise — sent once, never written to a file.
     """
     if not IMAPSYNC_BIN:
         return jsonify({
@@ -478,17 +493,17 @@ def job_retry(job_id):
         "host2": original["host2"], "port2": original["port2"], "ssl2": bool(original["ssl2"]),
         "user2": original["user2"], "authuser2": original.get("authuser2") or None,
         "options": json.loads(original["options_json"] or "{}"),
-    })
-    db.create_job(DB_PATH, job)
+    }, job_id=job_id)
+    db.reset_job_for_retry(DB_PATH, job_id)
     with ACTIVE_LOCK:
-        ACTIVE[job["id"]] = {"lines": [], "subscribers": [], "done": False}
+        ACTIVE[job_id] = {"lines": [], "subscribers": [], "done": False}
 
     threading.Thread(target=_execute_job, args=(job, password1, password2), daemon=True).start()
 
-    # Handed off to the new job above — redundant now, same as batch_retry.
+    # Used for this attempt — redundant now, same as batch_retry.
     db.delete_credentials(DB_PATH, job_id)
 
-    return jsonify({"job_id": job["id"]})
+    return jsonify({"job_id": job_id})
 
 
 @app.route("/api/stream/<job_id>")
@@ -522,26 +537,27 @@ def stream(job_id):
 
 def _run_batch_thread(batch_id, rows, schedule_id=None, max_concurrent=1):
     """
-    Runs every row of a bulk batch through a bounded worker pool sized
+    Runs a round of bulk-batch rows through a bounded worker pool sized
     max_concurrent instead of strictly one-at-a-time, so a large CSV can use
     spare capacity on the source/destination servers instead of leaving a
     job idle while the previous one finishes. max_concurrent=1 (the
     default) reproduces the old fully-sequential behavior exactly.
 
-    Progress bookkeeping (counts, DB updates, row_start/row_done broadcasts)
-    happens inside each worker, guarded by progress_lock since multiple
-    rows can finish at the same time now.
+    `rows` must already have a DB job row apiece — either the batch's very
+    first run (every row, freshly "queued" — see bulk_start) or a retry of
+    some existing subset reusing its rows in place (see
+    db.reset_job_for_retry / _retry_batch_rows) — this function only ever
+    updates rows that already exist, never creates one. Because of that,
+    the batch's persisted completed/success/error counts are recomputed
+    from the DB after every row (db.recompute_batch_progress) rather than
+    tracked incrementally from 0: an incremental counter would be wrong for
+    a partial retry, since it has no way to know about rows that already
+    settled in a previous round.
     """
-    total = len(rows)
-    progress_lock = threading.Lock()
-    counts = {"completed": 0, "success": 0, "errors": 0}
+    round_total = len(rows)
     stopped_event = threading.Event()
 
     def run_row(index, row):
-        # Every row already has a DB row in status "queued" — written up
-        # front by the caller (bulk_start / _run_scheduled_batch) before this
-        # thread pool even starts, precisely so a row still waiting its turn
-        # isn't lost without a trace if the server dies before it gets one.
         job = _new_job_dict(row, job_id=row.get("_job_id"))
 
         with BATCH_CANCEL_LOCK:
@@ -550,43 +566,36 @@ def _run_batch_thread(batch_id, rows, schedule_id=None, max_concurrent=1):
         if stopped_event.is_set():
             # A Stop request landed before this row got its turn — leave it
             # as a normal "interrupted" row (same as a server crash would)
-            # instead of silently vanishing, so "Download failed CSV" still
-            # picks it up.
+            # instead of silently vanishing, so "Retry rows"/"Download
+            # failed CSV" still pick it up.
             db.finish_job(
                 DB_PATH, job["id"], status="interrupted", finished_at=time.time(),
                 folders=None, messages=None, data_mb=None, errors=None, duration_s=None,
                 return_code=None, error_message="Batch was stopped before this row started.",
             )
+            db.recompute_batch_progress(DB_PATH, batch_id)
             return
 
         with ACTIVE_LOCK:
             ACTIVE[job["id"]] = {"lines": [], "subscribers": [], "done": False}
 
         _broadcast(BATCHES, BATCHES_LOCK, batch_id, "row_start", {
-            "index": index, "total": total, "job_id": job["id"],
+            "index": index, "total": round_total, "job_id": job["id"],
             "host1": job["host1"], "user1": job["user1"],
             "host2": job["host2"], "user2": job["user2"],
         })
 
         status = _execute_job(job, row["password1"], row["password2"])
 
-        with progress_lock:
-            counts["completed"] += 1
-            if status == "success":
-                counts["success"] += 1
-            else:
-                counts["errors"] += 1
-            # Persisted after every row (not just at the end) so the batch's
-            # progress survives a page reload, a dropped connection, or even
-            # this process dying partway through — History always shows how
-            # far a bulk run actually got, not just whether it finished.
-            db.update_batch_progress(
-                DB_PATH, batch_id, counts["completed"], counts["success"], counts["errors"]
-            )
+        # Persisted after every row (not just at the end) so the batch's
+        # progress survives a page reload, a dropped connection, or even
+        # this process dying partway through — History always shows how
+        # far a bulk run actually got, not just whether it finished.
+        db.recompute_batch_progress(DB_PATH, batch_id)
 
         finished = db.get_job(DB_PATH, job["id"])
         _broadcast(BATCHES, BATCHES_LOCK, batch_id, "row_done", {
-            "index": index, "total": total, "job_id": job["id"],
+            "index": index, "total": round_total, "job_id": job["id"],
             "host1": job["host1"], "user1": job["user1"],
             "host2": job["host2"], "user2": job["user2"],
             "status": finished["status"], "messages": finished["messages"],
@@ -623,10 +632,9 @@ def _run_batch_thread(batch_id, rows, schedule_id=None, max_concurrent=1):
     # auto-resume it, and "Retry rows" (see batch_retry) can reuse it
     # instead of making someone retype a password that's already sitting
     # there encrypted for exactly this. Skipped entirely if an active
-    # delta-sync schedule references this exact batch_id (only ever true
-    # for the original bulk_start batch, never for a retry/auto-resumed
-    # one) — that schedule needs every row's credentials kept indefinitely
-    # regardless of that row's last outcome.
+    # delta-sync schedule references this exact batch_id — that schedule
+    # needs every row's credentials kept indefinitely regardless of that
+    # row's last outcome.
     if not db.get_schedule_by_ref(DB_PATH, "batch", batch_id):
         job_ids = {row["_job_id"] for row in rows if row.get("_job_id")}
         successful_job_ids = [
@@ -635,51 +643,46 @@ def _run_batch_thread(batch_id, rows, schedule_id=None, max_concurrent=1):
         ]
         db.delete_credentials_many(DB_PATH, successful_job_ids)
 
+    _, success, error = db.recompute_batch_progress(DB_PATH, batch_id)
+    batch_total = (db.get_batch(DB_PATH, batch_id) or {}).get("total", round_total)
     _broadcast(BATCHES, BATCHES_LOCK, batch_id, "batch_done", {
-        "total": total, "success": counts["success"], "error": counts["errors"], "stopped": stopped_early,
+        "total": batch_total, "success": success, "error": error, "stopped": stopped_early,
     })
     _close(BATCHES, BATCHES_LOCK, batch_id)
 
 
-def _launch_retry_batch(original_batch, rows, name_suffix, keep_passwords):
+def _retry_batch_rows(batch, rows, keep_passwords):
     """
     Shared by the "Retry rows" endpoint and the startup auto-resume sweep:
-    takes fully-resolved row dicts (host/user/options + plaintext password,
-    each with its own "_job_id" already assigned) and starts them as a new
-    batch, exactly like a fresh bulk_start upload — including the same
-    "queued" rows up front and, if keep_passwords, the same "auto-resume if
-    the server restarts mid-batch" credential storage.
+    re-runs a chosen subset of an existing batch's rows IN PLACE — same
+    batch id, same job id per row (each row's "_job_id" here is its
+    existing id, not a new one) — instead of creating a new batch, so
+    History keeps one row per mailbox/batch that gets updated across
+    retries rather than growing with every attempt. If keep_passwords,
+    stores/refreshes each row's "auto-resume if the server restarts
+    mid-batch" credential the same way bulk_start does.
     """
     if not rows:
-        return None
+        return False
 
-    max_concurrent = min(max(int(original_batch.get("max_concurrent") or 1), 1), MAX_BATCH_CONCURRENCY)
-    base_name = original_batch.get("name") or f"Batch {original_batch['id'][:8]}"
-    new_batch_id = str(uuid.uuid4())
-    db.create_batch(
-        DB_PATH, new_batch_id, len(rows), time.time(),
-        name=f"{base_name} ({name_suffix})", max_concurrent=max_concurrent,
-    )
-    with BATCHES_LOCK:
-        BATCHES[new_batch_id] = {"lines": [], "subscribers": [], "done": False}
-
+    max_concurrent = min(max(int(batch.get("max_concurrent") or 1), 1), MAX_BATCH_CONCURRENCY)
     now = time.time()
     for row in rows:
-        db.create_job(
-            DB_PATH, _new_job_dict(row, job_id=row["_job_id"]),
-            batch_id=new_batch_id, status="queued",
-        )
+        db.reset_job_for_retry(DB_PATH, row["_job_id"])
         if keep_passwords:
             db.store_credentials(
                 DB_PATH, row["_job_id"],
                 crypto_store.encrypt(row["password1"]), crypto_store.encrypt(row["password2"]), now,
             )
+    db.reopen_batch_for_retry(DB_PATH, batch["id"])
+    with BATCHES_LOCK:
+        BATCHES[batch["id"]] = {"lines": [], "subscribers": [], "done": False}
 
     threading.Thread(
-        target=_run_batch_thread, args=(new_batch_id, rows),
+        target=_run_batch_thread, args=(batch["id"], rows),
         kwargs={"max_concurrent": max_concurrent}, daemon=True,
     ).start()
-    return new_batch_id
+    return True
 
 
 @app.route("/api/bulk/template")
@@ -814,14 +817,15 @@ def batch_failed_csv(batch_id):
 @app.route("/api/batches/<batch_id>/retry", methods=["POST"])
 def batch_retry(batch_id):
     """
-    Re-runs a chosen subset of one batch's failed/interrupted rows as a new
-    batch — the in-browser alternative to "Download failed CSV" for anyone
-    who'd rather not have passwords pass through a CSV file at all. Each
-    row's host/port/SSL/username/options are pulled back out of that row's
-    own DB record (never trusted from the client); only the passwords come
-    from the request. Not stored unless "keep_passwords" is set, in which
-    case they're kept only until this new batch finishes — see
-    _launch_retry_batch.
+    Re-runs a chosen subset of one batch's failed/interrupted rows IN
+    PLACE — same batch, same rows (see _retry_batch_rows) — the in-browser
+    alternative to "Download failed CSV" for anyone who'd rather not have
+    passwords pass through a CSV file at all. Each row's host/port/SSL/
+    username/options are pulled back out of that row's own DB record
+    (never trusted from the client); only the passwords come from the
+    request. Not stored unless "keep_passwords" is set, in which case
+    they're kept only until this batch next finishes — see
+    _retry_batch_rows.
     """
     if not IMAPSYNC_BIN:
         return jsonify({
@@ -834,7 +838,7 @@ def batch_retry(batch_id):
         return jsonify({"error": "Unknown batch id."}), 404
 
     entries = (request.get_json(silent=True) or {}).get("rows") or []
-    rows, row_errors, original_job_ids = [], [], []
+    rows, row_errors = [], []
     for entry in entries:
         job_id = entry.get("job_id")
         original = db.get_job(DB_PATH, job_id) if job_id else None
@@ -865,26 +869,16 @@ def batch_retry(batch_id):
             "host2": original["host2"], "port2": original["port2"], "ssl2": bool(original["ssl2"]),
             "user2": original["user2"], "authuser2": original.get("authuser2") or None, "password2": password2,
             "options": json.loads(original["options_json"] or "{}"),
-            "_job_id": str(uuid.uuid4()),
+            "_job_id": job_id,  # reused, not a new id — see _retry_batch_rows
         })
-        original_job_ids.append(job_id)
 
     if not rows:
         return jsonify({"error": "No valid rows to retry.", "row_errors": row_errors}), 400
 
     keep_passwords = bool((request.get_json(silent=True) or {}).get("keep_passwords"))
-    new_batch_id = _launch_retry_batch(batch, rows, "retry", keep_passwords)
+    _retry_batch_rows(batch, rows, keep_passwords)
 
-    # These specific rows have now been handed off to the new batch above —
-    # if the original batch had "auto-resume" credentials stored for them,
-    # those are redundant now (stale duplicates of what the new batch just
-    # got, if anything) and would otherwise only get cleaned up if the
-    # ORIGINAL batch happens to run through _run_batch_thread again, which
-    # it never will (it's already terminal). Drop them now instead of
-    # leaving them to linger.
-    db.delete_credentials_many(DB_PATH, original_job_ids)
-
-    return jsonify({"batch_id": new_batch_id, "total": len(rows), "row_errors": row_errors})
+    return jsonify({"batch_id": batch_id, "total": len(rows), "row_errors": row_errors})
 
 
 @app.route("/api/bulk/stream/<batch_id>")
@@ -982,8 +976,9 @@ def _auto_resume_interrupted_batches():
     restarted mid-batch). Any interrupted batch whose rows still have
     "auto-resume" credentials stored (opted into via the "keep passwords
     until this batch finishes" checkbox at bulk_start/Retry-rows time) gets
-    its still-pending rows automatically relaunched as a new batch — no
-    person needs to retype anything, which is the whole point for a batch
+    its still-pending rows automatically re-run in place (same batch, same
+    job ids — see _retry_batch_rows) — no person needs to retype anything,
+    nothing new added to History, which is the whole point for a batch
     of hundreds/thousands of rows. A batch that never opted in has nothing
     stored to resume with, and is left exactly as before: retryable by hand
     via History -> Retry rows / Download failed CSV.
@@ -1002,7 +997,7 @@ def _auto_resume_interrupted_batches():
             j for j in db.list_jobs_by_batch(DB_PATH, batch["id"])
             if j["status"] in ("error", "interrupted")
         ]
-        rows, resumed_job_ids = [], []
+        rows = []
         for job in pending:
             creds = db.get_credentials(DB_PATH, job["id"])
             if not creds:
@@ -1015,25 +1010,18 @@ def _auto_resume_interrupted_batches():
                 "user2": job["user2"], "authuser2": job.get("authuser2") or None,
                 "password2": crypto_store.decrypt(creds["enc_password2"]),
                 "options": json.loads(job["options_json"] or "{}"),
-                "_job_id": str(uuid.uuid4()),
+                "_job_id": job["id"],  # reused, not a new id — see _retry_batch_rows
             })
-            resumed_job_ids.append(job["id"])
 
         if not rows:
             continue  # nothing stored for this one — leave it for a manual retry
 
-        # keep_passwords=True: if this auto-resumed batch also gets
-        # interrupted, it can auto-resume again in turn.
-        _launch_retry_batch(batch, rows, "auto-resumed", keep_passwords=True)
-
-        # The original rows' credentials just got handed off to the new
-        # batch above — redundant now, EXCEPT when a delta-sync schedule
-        # still references this exact batch_id, which needs them kept
-        # indefinitely for its own future re-runs (see _run_scheduled_batch,
-        # which reads credentials straight off this original batch's rows
-        # every time it fires).
-        if not db.get_schedule_by_ref(DB_PATH, "batch", batch["id"]):
-            db.delete_credentials_many(DB_PATH, resumed_job_ids)
+        # keep_passwords=True: if this auto-resumed run also gets
+        # interrupted, it can auto-resume again in turn. Credential cleanup
+        # (drop the ones that ended up unneeded) happens inside
+        # _run_batch_thread once this round actually finishes, same as any
+        # other retry — nothing to do here after kicking it off.
+        _retry_batch_rows(batch, rows, keep_passwords=True)
 
 
 def _run_schedule(sched):

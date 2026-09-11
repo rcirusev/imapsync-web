@@ -153,24 +153,51 @@ incremental (re-running the same host/user/options only copies what's
 missing), not on any checkpoint/resume logic in this app — "Resume"/
 "Resume now" (single job), "Retry rows"/"Download failed CSV" (a batch),
 and auto-resume (below) are all just convenient ways to re-supply
-host/user/options (+ a password) for another `_new_job_dict` / `_execute_job`
-run, nothing more.
+host/user/options (+ a password) for another `_execute_job` run, nothing
+more.
 
-Retrying a single job — by hand via `/api/jobs/<id>/retry` — and retrying a
-batch's failed/interrupted rows — via `/api/batches/<id>/retry` (the
-"Retry rows" modal) or automatically via `_auto_resume_interrupted_batches`
-(below) — all fall back to a still-stored "auto-resume" credential
-(`has_stored_password` on `/api/jobs` and `/api/batches/<id>/jobs`) when
-the caller doesn't supply a password, instead of requiring one every time;
-the frontend's "Resume now" button (vs. "Resume", which still jumps to the
-New migration form for manual retyping) is this exposed as a one-click
-action for a single job, same idea as the Retry-rows modal's "saved
-password" rows. The batch path goes through the shared `_launch_retry_batch`
-helper, which is `bulk_start`'s batch-creation tail (create batch → queued
-rows → background thread) factored out for reuse against rows built from
-*already-stored* job records instead of a freshly parsed CSV; the
-single-job path (`job_retry`) is small enough to just inline the
-equivalent of `/api/start`'s job creation directly.
+**Retrying reuses the existing row(s) in place — same job id(s), same
+batch id — rather than creating new ones.** `db.reset_job_for_retry` resets
+a job row back to `queued` with its stats cleared (used by both the
+single-job and batch retry paths, right before `_execute_job` runs again);
+`db.reopen_batch_for_retry` does the batch-level equivalent. `_execute_job`
+opens `job["log_path"]` in **append** mode, not truncate — writing a
+`--- Resumed <timestamp> ---` marker first when the file already has
+content — so a job's full log stays one continuous, chronological record
+across every attempt instead of losing the previous one; a brand new job's
+log file doesn't exist yet, so this is identical to starting fresh either
+way. History therefore keeps exactly one row per mailbox/batch no matter
+how many times it's retried, instead of accumulating a `(retry) (retry)
+(retry)...`-suffixed trail.
+
+Because rows can now be *revisited* (a batch's completed/success/error no
+longer only ever moves forward from a fresh 0), `_run_batch_thread`
+recomputes those three numbers from the DB after every row
+(`db.recompute_batch_progress`, scanning all of a batch's rows by their
+current status) instead of tracking them incrementally in a local counter
+— an incremental counter seeded at 0 would be wrong for a *partial* retry,
+since it has no way to know about rows that already succeeded in a
+previous round. `_run_batch_thread`'s `rows` argument (and therefore its
+`row_start`/`row_done` broadcasts' own `index`/`total`) reflects only the
+current *round* being run (all of a batch's rows on its first run, a
+chosen subset on a retry) — separate from the batch's own persisted
+`total`, which never changes.
+
+Retrying a single job — by hand via `/api/jobs/<id>/retry` (`job_retry`) —
+and retrying a batch's failed/interrupted rows — via
+`/api/batches/<id>/retry` (`batch_retry`, the "Retry rows" modal) or
+automatically via `_auto_resume_interrupted_batches` (below) — all fall
+back to a still-stored "auto-resume" credential (`has_stored_password` on
+`/api/jobs` and `/api/batches/<id>/jobs`) when the caller doesn't supply a
+password, instead of requiring one every time; the frontend's "Resume now"
+button (vs. "Resume", which still jumps to the New migration form for
+manual retyping) exposes this as a one-click action for a single job, same
+idea as the Retry-rows modal's "saved password" rows. The batch path goes
+through the shared `_retry_batch_rows` helper — reset each retried row
+(`reset_job_for_retry`, optionally re-storing its credential),
+`reopen_batch_for_retry`, then hand the same `rows` (now carrying each
+row's *existing* job id in `_job_id`, not a freshly generated one) to
+`_run_batch_thread`.
 
 ### Scheduled delta sync
 
@@ -202,12 +229,13 @@ delta-sync schedule for that exact batch_id — that schedule owns an
 indefinite copy of every row's credentials instead. On startup,
 right after the orphan-interrupt sweep, `_auto_resume_interrupted_batches`
 scans **every** `interrupted` batch with still-stored credentials and
-silently relaunches its pending rows via `_launch_retry_batch` — no user
-action, and *regardless* of whether a delta-sync schedule also references
-that batch. Whether a schedule is attached only affects the cleanup that
-follows: same as `_run_batch_thread`, the original rows' credentials are
-purged unless `get_schedule_by_ref` finds one, since that schedule needs
-them indefinitely for its own future re-runs. Conflating "should this
+silently re-runs its pending rows in place via `_retry_batch_rows` (same
+batch, same job ids — see above) — no user action, and *regardless* of
+whether a delta-sync schedule also references that batch. Whether a
+schedule is attached only affects the cleanup that follows: same as
+`_run_batch_thread`, credentials are purged unless `get_schedule_by_ref`
+finds one, since that schedule needs them indefinitely for its own future
+re-runs. Conflating "should this
 resume now" with "does a schedule need these credentials forever" (both
 gated on the same schedule check) used to mean a batch with both "Auto-
 resume" and "Automatically re-run..." checked wouldn't actually resume

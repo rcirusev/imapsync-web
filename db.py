@@ -225,15 +225,6 @@ def stop_batch(db_path, batch_id, finished_at):
     conn.commit()
 
 
-def update_batch_progress(db_path, batch_id, completed, success, error):
-    conn = get_conn(db_path)
-    conn.execute(
-        "UPDATE batches SET completed = ?, success = ?, error = ? WHERE id = ?",
-        (completed, success, error, batch_id),
-    )
-    conn.commit()
-
-
 def finish_batch(db_path, batch_id, finished_at):
     conn = get_conn(db_path)
     conn.execute(
@@ -280,6 +271,54 @@ def list_batches_by_status(db_path, status):
         "SELECT * FROM batches WHERE status = ? ORDER BY created_at DESC", (status,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def reset_job_for_retry(db_path, job_id):
+    """Resets an existing job row back to 'queued' with its stats cleared,
+    for a retry that reuses the same row (same id, so its log file and any
+    "auto-resume" credential stay associated with it) instead of creating
+    a brand new one — keeps History to one row per mailbox across repeated
+    retries instead of growing with every attempt."""
+    conn = get_conn(db_path)
+    conn.execute(
+        """UPDATE jobs SET status = 'queued', started_at = NULL, finished_at = NULL,
+               folders = NULL, messages = NULL, data_mb = NULL, errors = NULL,
+               duration_s = NULL, return_code = NULL, error_message = NULL
+           WHERE id = ?""",
+        (job_id,),
+    )
+    conn.commit()
+
+
+def reopen_batch_for_retry(db_path, batch_id):
+    """Sets an existing batch row back to 'running' for a retry that
+    reuses it in place instead of creating a new batch."""
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE batches SET status = 'running', finished_at = NULL WHERE id = ?",
+        (batch_id,),
+    )
+    conn.commit()
+
+
+def recompute_batch_progress(db_path, batch_id):
+    """Recomputes and persists a batch's completed/success/error counts
+    from its rows' actual current statuses, rather than tracking them
+    incrementally — so a retry that reuses existing rows in place (see
+    reset_job_for_retry) stays correct without the caller needing to know
+    which rows are "new" this round vs. already-settled from a previous
+    one. Returns (completed, success, error)."""
+    conn = get_conn(db_path)
+    rows = conn.execute("SELECT status FROM jobs WHERE batch_id = ?", (batch_id,)).fetchall()
+    completed = sum(1 for r in rows if r["status"] in ("success", "error", "interrupted"))
+    success = sum(1 for r in rows if r["status"] == "success")
+    error = completed - success
+    conn.execute(
+        "UPDATE batches SET completed = ?, success = ?, error = ? WHERE id = ?",
+        (completed, success, error, batch_id),
+    )
+    conn.commit()
+    return completed, success, error
 
 
 def mark_started(db_path, job_id, started_at):
