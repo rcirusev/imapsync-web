@@ -67,6 +67,28 @@ source at image-build time using the exact same package list/steps as
 `install.sh`'s Debian/Ubuntu fallback (see `Dockerfile`), together with
 this app.
 
+### Brand-new server (nothing installed yet)
+
+This is the one-liner for the common case: a fresh VM spun up for a
+client's migration, with neither `git` nor Docker on it yet.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rcirusev/imapsync-web/main/bootstrap.sh | sudo bash
+```
+
+It installs `git` if missing, installs Docker Engine + the `docker compose`
+plugin if missing (via Docker's own official install script — covers
+Debian/Ubuntu and RHEL/Fedora-family distros, same as `install.sh`'s
+supported list), clones this repo into `/opt/imapsync-web` (override with
+`INSTALL_DIR=...`), then pulls the pre-built image from GHCR and runs
+`docker compose up -d`. Safe to re-run — an existing install gets
+`git pull` instead of a fresh clone, so it also works as the update
+command later. Piping a script into `sudo bash` is worth reading first;
+`curl -fsSLO .../bootstrap.sh && less bootstrap.sh` downloads it without
+running it.
+
+### Already have the repo cloned
+
 ```bash
 git clone https://github.com/rcirusev/imapsync-web.git
 cd imapsync-web
@@ -87,11 +109,11 @@ sudo ./install-docker.sh
 ```
 
 It checks whether Docker (Engine + the `docker compose` plugin) is already
-installed; if not, installs it via Docker's own official install script
-(covers Debian/Ubuntu and RHEL/Fedora-family distros, same as `install.sh`'s
-supported list), then runs `docker compose up -d` for you. Safe to re-run —
-if Docker's already there it skips straight to bringing the stack up, so
-it also works as the update command later.
+installed; if not, installs it the same way `bootstrap.sh` does, then runs
+`docker compose up -d` for you. Safe to re-run — if Docker's already there
+it skips straight to bringing the stack up, so it also works as the update
+command later. Unlike `bootstrap.sh` it assumes the repo is already
+cloned and doesn't touch `git` or clone anywhere.
 
 Plain `docker`, no compose:
 

@@ -28,11 +28,16 @@ CI jobs are `.github/workflows/check-upstream.yml` (daily, bumps
 Verify changes by running the app locally and exercising the UI.
 
 Docker: `docker build -t imapsync-web .` / `docker compose up -d` (or
-`sudo ./install-docker.sh`, which installs Docker itself first if it's
-missing, then does the same `docker compose up -d`). The Dockerfile builds
-imapsync from source in a separate stage (Ubuntu 24.04, same package list as
-`install.sh`'s apt fallback) — keep the two package lists in sync if either
-changes.
+`sudo ./install-docker.sh` from an existing clone, which installs Docker
+itself first if it's missing, then does the same `docker compose up -d`; or
+`bootstrap.sh`, which does the same Docker check plus a `git`
+check/install and the clone itself — the one-liner for a server that has
+nothing on it yet). The Dockerfile builds imapsync from source in a
+separate stage (Ubuntu 24.04, same package list as `install.sh`'s apt
+fallback) — keep the two package lists in sync if either changes.
+`install-docker.sh` and `bootstrap.sh` intentionally duplicate their
+Docker-install block rather than share it — keep both in sync if that
+logic changes (e.g. the get.docker.com approach, or the curl fallback).
 
 ## Architecture
 
