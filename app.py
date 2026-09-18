@@ -1063,9 +1063,11 @@ def _run_scheduled_job(sched):
 
     payload = {
         "host1": original["host1"], "port1": original["port1"], "ssl1": bool(original["ssl1"]),
-        "user1": original["user1"],
+        "user1": original["user1"], "authuser1": original.get("authuser1") or None,
+        "authmech1": original.get("authmech1") or None,
         "host2": original["host2"], "port2": original["port2"], "ssl2": bool(original["ssl2"]),
-        "user2": original["user2"],
+        "user2": original["user2"], "authuser2": original.get("authuser2") or None,
+        "authmech2": original.get("authmech2") or None,
         "options": json.loads(original["options_json"] or "{}"),
     }
     job = _new_job_dict(payload)
@@ -1087,9 +1089,13 @@ def _run_scheduled_batch(sched):
             continue  # this particular row was never enrolled (shouldn't happen, but be safe)
         rows.append({
             "host1": orig["host1"], "port1": orig["port1"], "ssl1": bool(orig["ssl1"]),
-            "user1": orig["user1"], "password1": crypto_store.decrypt(creds["enc_password1"]),
+            "user1": orig["user1"], "authuser1": orig.get("authuser1") or None,
+            "authmech1": orig.get("authmech1") or None,
+            "password1": crypto_store.decrypt(creds["enc_password1"]),
             "host2": orig["host2"], "port2": orig["port2"], "ssl2": bool(orig["ssl2"]),
-            "user2": orig["user2"], "password2": crypto_store.decrypt(creds["enc_password2"]),
+            "user2": orig["user2"], "authuser2": orig.get("authuser2") or None,
+            "authmech2": orig.get("authmech2") or None,
+            "password2": crypto_store.decrypt(creds["enc_password2"]),
             "options": json.loads(orig["options_json"] or "{}"),
         })
     if not rows:
