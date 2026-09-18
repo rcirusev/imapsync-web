@@ -288,11 +288,13 @@ def _new_job_dict(row_or_payload, job_id=None):
         "ssl1": bool(p.get("ssl1", True)),
         "user1": p["user1"].strip(),
         "authuser1": (p.get("authuser1") or "").strip() or None,
+        "authmech1": (p.get("authmech1") or "").strip().upper() or None,
         "host2": p["host2"].strip(),
         "port2": str(p.get("port2") or "993"),
         "ssl2": bool(p.get("ssl2", True)),
         "user2": p["user2"].strip(),
         "authuser2": (p.get("authuser2") or "").strip() or None,
+        "authmech2": (p.get("authmech2") or "").strip().upper() or None,
         "options": p.get("options", {}),
         "log_path": os.path.join(LOGS_DIR, f"{job_id}.log"),
     }
@@ -502,18 +504,18 @@ def job_retry(job_id):
             return jsonify({"error": "This row's batch no longer exists."}), 404
         _retry_batch_rows(batch, [{
             "host1": original["host1"], "port1": original["port1"], "ssl1": bool(original["ssl1"]),
-            "user1": original["user1"], "authuser1": original.get("authuser1") or None, "password1": password1,
+            "user1": original["user1"], "authuser1": original.get("authuser1") or None, "authmech1": original.get("authmech1") or None, "password1": password1,
             "host2": original["host2"], "port2": original["port2"], "ssl2": bool(original["ssl2"]),
-            "user2": original["user2"], "authuser2": original.get("authuser2") or None, "password2": password2,
+            "user2": original["user2"], "authuser2": original.get("authuser2") or None, "authmech2": original.get("authmech2") or None, "password2": password2,
             "options": options, "_job_id": job_id,
         }], keep_passwords=False)
         return jsonify({"job_id": job_id, "batch_id": batch["id"]})
 
     job = _new_job_dict({
         "host1": original["host1"], "port1": original["port1"], "ssl1": bool(original["ssl1"]),
-        "user1": original["user1"], "authuser1": original.get("authuser1") or None,
+        "user1": original["user1"], "authuser1": original.get("authuser1") or None, "authmech1": original.get("authmech1") or None,
         "host2": original["host2"], "port2": original["port2"], "ssl2": bool(original["ssl2"]),
-        "user2": original["user2"], "authuser2": original.get("authuser2") or None,
+        "user2": original["user2"], "authuser2": original.get("authuser2") or None, "authmech2": original.get("authmech2") or None,
         "options": options,
     }, job_id=job_id)
     db.reset_job_for_retry(DB_PATH, job_id)
@@ -733,10 +735,10 @@ def _launch_staged_batch(batch):
             continue  # nothing to log in with — skip rather than fail the whole batch
         rows.append({
             "host1": job["host1"], "port1": job["port1"], "ssl1": bool(job["ssl1"]),
-            "user1": job["user1"], "authuser1": job.get("authuser1") or None,
+            "user1": job["user1"], "authuser1": job.get("authuser1") or None, "authmech1": job.get("authmech1") or None,
             "password1": crypto_store.decrypt(creds["enc_password1"]),
             "host2": job["host2"], "port2": job["port2"], "ssl2": bool(job["ssl2"]),
-            "user2": job["user2"], "authuser2": job.get("authuser2") or None,
+            "user2": job["user2"], "authuser2": job.get("authuser2") or None, "authmech2": job.get("authmech2") or None,
             "password2": crypto_store.decrypt(creds["enc_password2"]),
             "options": json.loads(job["options_json"] or "{}"),
             "_job_id": job["id"],  # reused, never a fresh id — see _retry_batch_rows
@@ -1015,9 +1017,9 @@ def batch_retry(batch_id):
             continue
         rows.append({
             "host1": original["host1"], "port1": original["port1"], "ssl1": bool(original["ssl1"]),
-            "user1": original["user1"], "authuser1": original.get("authuser1") or None, "password1": password1,
+            "user1": original["user1"], "authuser1": original.get("authuser1") or None, "authmech1": original.get("authmech1") or None, "password1": password1,
             "host2": original["host2"], "port2": original["port2"], "ssl2": bool(original["ssl2"]),
-            "user2": original["user2"], "authuser2": original.get("authuser2") or None, "password2": password2,
+            "user2": original["user2"], "authuser2": original.get("authuser2") or None, "authmech2": original.get("authmech2") or None, "password2": password2,
             "options": json.loads(original["options_json"] or "{}"),
             "_job_id": job_id,  # reused, not a new id — see _retry_batch_rows
         })
@@ -1154,10 +1156,10 @@ def _auto_resume_interrupted_batches():
                 continue
             rows.append({
                 "host1": job["host1"], "port1": job["port1"], "ssl1": bool(job["ssl1"]),
-                "user1": job["user1"], "authuser1": job.get("authuser1") or None,
+                "user1": job["user1"], "authuser1": job.get("authuser1") or None, "authmech1": job.get("authmech1") or None,
                 "password1": crypto_store.decrypt(creds["enc_password1"]),
                 "host2": job["host2"], "port2": job["port2"], "ssl2": bool(job["ssl2"]),
-                "user2": job["user2"], "authuser2": job.get("authuser2") or None,
+                "user2": job["user2"], "authuser2": job.get("authuser2") or None, "authmech2": job.get("authmech2") or None,
                 "password2": crypto_store.decrypt(creds["enc_password2"]),
                 "options": json.loads(job["options_json"] or "{}"),
                 "_job_id": job["id"],  # reused, not a new id — see _retry_batch_rows

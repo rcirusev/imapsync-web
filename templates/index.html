@@ -75,6 +75,12 @@
               <input type="text" name="authuser1" placeholder="admin@oldprovider.com" autocomplete="off">
             </label>
 
+            <label class="field" id="authmech1-row" hidden>
+              <span>Auth mechanism (optional)</span>
+              <input type="text" name="authmech1" placeholder="e.g. PLAIN" autocomplete="off">
+              <span class="field-hint">Leave blank to let imapsync pick automatically. Some delegated-admin setups (e.g. Zimbra adminLoginAs) need this forced to PLAIN.</span>
+            </label>
+
             <label class="field">
               <span id="password1-label">Password</span>
               <input type="password" name="password1" autocomplete="off">
@@ -118,6 +124,12 @@
             <label class="field" id="authuser2-row" hidden>
               <span>Admin username</span>
               <input type="text" name="authuser2" placeholder="admin@newprovider.com" autocomplete="off">
+            </label>
+
+            <label class="field" id="authmech2-row" hidden>
+              <span>Auth mechanism (optional)</span>
+              <input type="text" name="authmech2" placeholder="e.g. PLAIN" autocomplete="off">
+              <span class="field-hint">Leave blank to let imapsync pick automatically. Some delegated-admin setups (e.g. Zimbra adminLoginAs) need this forced to PLAIN.</span>
             </label>
 
             <label class="field">

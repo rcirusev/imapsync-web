@@ -168,13 +168,19 @@
     const checkbox = document.getElementById(`master-account-${side}`);
     const authuserRow = document.getElementById(`authuser${side}-row`);
     const authuserInput = authuserRow.querySelector("input");
+    const authmechRow = document.getElementById(`authmech${side}-row`);
+    const authmechInput = authmechRow.querySelector("input");
     const passwordLabel = document.getElementById(`password${side}-label`);
     const passwordHint = document.getElementById(`password${side}-hint`);
 
     function apply() {
       const on = checkbox.checked;
       authuserRow.hidden = !on;
-      if (!on) authuserInput.value = "";
+      authmechRow.hidden = !on;
+      if (!on) {
+        authuserInput.value = "";
+        authmechInput.value = "";
+      }
       passwordLabel.textContent = on ? "Admin account password" : "Password";
       passwordHint.textContent = on
         ? "The master/admin account's password, sent once, never stored or logged — not this mailbox's own password."
@@ -204,12 +210,14 @@
       host1: data.get("host1"),
       user1: data.get("user1"),
       authuser1: data.get("authuser1") || "",
+      authmech1: data.get("authmech1") || "",
       password1: data.get("password1"),
       port1: data.get("port1"),
       ssl1: form.ssl1.checked,
       host2: data.get("host2"),
       user2: data.get("user2"),
       authuser2: data.get("authuser2") || "",
+      authmech2: data.get("authmech2") || "",
       password2: data.get("password2"),
       port2: data.get("port2"),
       ssl2: form.ssl2.checked,
@@ -1020,8 +1028,8 @@
         <span class="nowrap">${started}</span>
         ${startedTags ? `<div class="started-tags">${startedTags}</div>` : ""}
       </div></td>
-      <td>${accountCell(job.user1, job.host1, job.authuser1 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser1) + '">master</span>' : "")}</td>
-      <td>${accountCell(job.user2, job.host2, job.authuser2 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser2) + '">master</span>' : "")}</td>
+      <td>${accountCell(job.user1, job.host1, job.authuser1 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser1) + (job.authmech1 ? ' (' + escapeHtml(job.authmech1) + ')' : "") + '">master</span>' : "")}</td>
+      <td>${accountCell(job.user2, job.host2, job.authuser2 ? ' <span class="bulk-tag" title="Authenticated via master account ' + escapeHtml(job.authuser2) + (job.authmech2 ? ' (' + escapeHtml(job.authmech2) + ')' : "") + '">master</span>' : "")}</td>
       <td class="nowrap"><span class="status-badge status-${job.status}">${STATUS_LABEL[job.status] || job.status}</span></td>
       <td class="nowrap">${fmtOrDash(job.messages)}</td>
       <td class="nowrap">${fmtOrDash(job.errors)}</td>

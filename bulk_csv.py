@@ -19,9 +19,17 @@ REQUIRED_FIELDS = ["host1", "user1", "password1", "host2", "user2", "password2"]
 # actually authenticates, and password1/password2 becomes THAT account's
 # password (the same one for every row using it, typically). See the
 # "Master / admin account" README section.
+#
+# authmech1/authmech2 are also optional and only matter alongside
+# authuser1/authuser2: they force a specific SASL mechanism (e.g. PLAIN)
+# for that side's login instead of letting imapsync negotiate one. Some
+# servers' delegated/impersonation auth path only accepts one exact
+# mechanism — e.g. Zimbra delegated-admin "login as" over IMAP needs
+# authmech1=PLAIN even after the adminLoginAs right is granted correctly.
+# Leave blank to let imapsync pick automatically, as before.
 TEMPLATE_HEADER = [
-    "host1", "port1", "ssl1", "user1", "authuser1", "password1",
-    "host2", "port2", "ssl2", "user2", "authuser2", "password2",
+    "host1", "port1", "ssl1", "user1", "authuser1", "authmech1", "password1",
+    "host2", "port2", "ssl2", "user2", "authuser2", "authmech2", "password2",
     "dry", "syncflags", "delete2duplicates", "subscribeall", "exclude",
 ]
 
@@ -55,13 +63,13 @@ def build_template_csv():
     writer = csv.writer(buf)
     writer.writerow(TEMPLATE_HEADER)
     writer.writerow([
-        "imap.oldprovider.com", "993", "true", "alice@old.com", "", "secret1",
-        "imap.newprovider.com", "993", "true", "alice@new.com", "", "secret2",
+        "imap.oldprovider.com", "993", "true", "alice@old.com", "", "", "secret1",
+        "imap.newprovider.com", "993", "true", "alice@new.com", "", "", "secret2",
         "false", "true", "false", "true", "Spam,Trash",
     ])
     writer.writerow([
-        "imap.oldprovider.com", "993", "true", "bob@old.com", "", "secret3",
-        "imap.newprovider.com", "993", "true", "bob@new.com", "", "secret4",
+        "imap.oldprovider.com", "993", "true", "bob@old.com", "", "", "secret3",
+        "imap.newprovider.com", "993", "true", "bob@new.com", "", "", "secret4",
         "false", "true", "false", "true", "",
     ])
     return buf.getvalue()
@@ -85,9 +93,11 @@ def build_rows_csv(jobs):
             options = {}
         writer.writerow([
             _csv_safe(job.get("host1", "")), job.get("port1", ""), "true" if job.get("ssl1") else "false",
-            _csv_safe(job.get("user1", "")), _csv_safe(job.get("authuser1") or ""), "",
+            _csv_safe(job.get("user1", "")), _csv_safe(job.get("authuser1") or ""),
+            _csv_safe(job.get("authmech1") or ""), "",
             _csv_safe(job.get("host2", "")), job.get("port2", ""), "true" if job.get("ssl2") else "false",
-            _csv_safe(job.get("user2", "")), _csv_safe(job.get("authuser2") or ""), "",
+            _csv_safe(job.get("user2", "")), _csv_safe(job.get("authuser2") or ""),
+            _csv_safe(job.get("authmech2") or ""), "",
             "true" if options.get("dry") else "false",
             "true" if options.get("syncflags", True) else "false",
             "true" if options.get("delete2duplicates") else "false",
@@ -136,10 +146,12 @@ def parse_bulk_csv(file_bytes):
             "host1": get("host1"), "port1": get("port1", "993"),
             "ssl1": to_bool(raw.get("ssl1"), True),
             "user1": get("user1"), "authuser1": get("authuser1") or None,
+            "authmech1": (get("authmech1") or "").upper() or None,
             "password1": get("password1"),
             "host2": get("host2"), "port2": get("port2", "993"),
             "ssl2": to_bool(raw.get("ssl2"), True),
             "user2": get("user2"), "authuser2": get("authuser2") or None,
+            "authmech2": (get("authmech2") or "").upper() or None,
             "password2": get("password2"),
             "options": {
                 "dry": to_bool(raw.get("dry"), False),

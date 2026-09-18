@@ -225,6 +225,21 @@ value repeated down the whole column with a `password1`/`password2` that
 matches. A job that used this shows a small **master** tag next to its
 account in History.
 
+An optional **Auth mechanism** field (`--authmech1`/`--authmech2`,
+`authmech1`/`authmech2` in the CSV) appears next to the admin username once
+a master/admin account is enabled. Leave it blank and imapsync negotiates a
+mechanism on its own, same as before — only set it if a login that should
+work keeps failing. The concrete case this exists for is **Zimbra delegated
+(non-global) admin access over IMAP**: granting the admin right
+`adminLoginAs` (not the user right `loginAs` — they're easy to confuse and
+only one of them is what the IMAP "login as" path actually checks) is
+enough for a full global admin, but a delegated admin's SASL PLAIN
+impersonation login can still get rejected unless the mechanism is pinned
+explicitly. Setting `authmech1` (or `authmech2`) to `PLAIN` fixes that —
+see `zmprov grantRight domain <domain> usr <admin> adminLoginAs` and
+`zmprov checkRight account <target> <admin> adminLoginAs` (expect
+`ALLOWED`) on the Zimbra side if the login still fails after setting it.
+
 The admin credentials get exactly the same handling as any other password
 in this app: sent once to start the migration (or the connection test),
 never written to the log or the database — unless you explicitly turn on
@@ -289,9 +304,10 @@ the form in one at a time:
    everything else falls back to the same defaults as the New migration
    form if left blank. A folder list in `exclude` with more than one name
    needs the field quoted, e.g. `"Spam,Trash"` (the template shows this).
-   `authuser1`/`authuser2` are optional too — see Master / admin account
-   below for migrating every row through an admin login instead of asking
-   each mailbox owner for their password.
+   `authuser1`/`authuser2` (and the optional `authmech1`/`authmech2` next to
+   them) are optional too — see Master / admin account below for migrating
+   every row through an admin login instead of asking each mailbox owner
+   for their password.
 3. Upload the file and click **Start bulk migration**. Rows run
    **sequentially, one at a time**, in file order — not in parallel — so a
    large batch doesn't open a burst of simultaneous connections against the

@@ -23,11 +23,13 @@ CREATE TABLE IF NOT EXISTS jobs (
     ssl1          INTEGER NOT NULL,
     user1         TEXT NOT NULL,
     authuser1     TEXT,
+    authmech1     TEXT,
     host2         TEXT NOT NULL,
     port2         TEXT NOT NULL,
     ssl2          INTEGER NOT NULL,
     user2         TEXT NOT NULL,
     authuser2     TEXT,
+    authmech2     TEXT,
     options_json  TEXT NOT NULL,
     status        TEXT NOT NULL,   -- running | success | error
     folders       INTEGER,
@@ -147,6 +149,17 @@ def init_db(db_path):
             conn.commit()
         except sqlite3.OperationalError:
             pass  # column already exists
+    # ...and for authmech1/authmech2 (force a specific SASL mechanism for
+    # that side's login -- e.g. PLAIN, needed for some delegated-admin
+    # setups such as Zimbra adminLoginAs -- see README's "Master / admin
+    # account" section). Only meaningful alongside authuser1/authuser2, but
+    # stored independently so it survives a retry/resume like they do.
+    for col in ("authmech1", "authmech2"):
+        try:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
     # ...and for max_concurrent (bounded worker-pool size for bulk batches —
     # pre-existing installs default every row here to 1, i.e. today's
     # strictly-sequential behavior, since that's what already ran).
@@ -168,14 +181,15 @@ def create_job(db_path, job, batch_id=None, schedule_id=None, status="running"):
     conn = get_conn(db_path)
     conn.execute(
         """INSERT INTO jobs
-           (id, created_at, host1, port1, ssl1, user1, authuser1,
-            host2, port2, ssl2, user2, authuser2,
+           (id, created_at, host1, port1, ssl1, user1, authuser1, authmech1,
+            host2, port2, ssl2, user2, authuser2, authmech2,
             options_json, status, log_path, batch_id, schedule_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             job["id"], job["created_at"], job["host1"], job["port1"], int(job["ssl1"]),
-            job["user1"], job.get("authuser1") or None,
+            job["user1"], job.get("authuser1") or None, job.get("authmech1") or None,
             job["host2"], job["port2"], int(job["ssl2"]), job["user2"], job.get("authuser2") or None,
+            job.get("authmech2") or None,
             json.dumps(job["options"]), status, job["log_path"], batch_id, schedule_id,
         ),
     )

@@ -45,7 +45,8 @@ def build_command(binary, job, password1, password2, secrets_dir):
     """
     job: dict with host1/port1/ssl1/user1/host2/port2/ssl2/user2/options,
     plus optional authuser1/authuser2 for master/admin-account migrations
-    (see the "Master / admin account" README section).
+    and optional authmech1/authmech2 to pin the SASL mechanism used for
+    that login (see the "Master / admin account" README section).
     Returns (cmd_list, cleanup_paths).
     """
     pw1_path = _write_secret_file(secrets_dir, password1 or "")
@@ -75,6 +76,19 @@ def build_command(binary, job, password1, password2, secrets_dir):
         cmd += ["--authuser1", job["authuser1"]]
     if job.get("authuser2"):
         cmd += ["--authuser2", job["authuser2"]]
+
+    # Force a specific SASL mechanism for that side's login instead of
+    # letting imapsync negotiate one. Mainly needed alongside authuserN:
+    # some servers' delegated/impersonation auth path only works with one
+    # exact mechanism even though normal logins on the same server accept
+    # several. Concretely: Zimbra delegated-admin "login as" over IMAP
+    # requires the authzid form of SASL PLAIN — granting the admin right
+    # (adminLoginAs) is necessary but if imapsync picks a different
+    # mechanism the login still fails, so --authmech1/2 PLAIN pins it.
+    if job.get("authmech1"):
+        cmd += ["--authmech1", job["authmech1"]]
+    if job.get("authmech2"):
+        cmd += ["--authmech2", job["authmech2"]]
 
     options = job.get("options") or {}
     if options.get("dry"):
