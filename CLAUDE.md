@@ -27,10 +27,12 @@ CI jobs are `.github/workflows/check-upstream.yml` (daily, bumps
 `docker-publish.yml` (builds/pushes the image to GHCR on push to `main`).
 Verify changes by running the app locally and exercising the UI.
 
-Docker: `docker build -t imapsync-web .` / `docker compose up -d`. The
-Dockerfile builds imapsync from source in a separate stage (Ubuntu 24.04,
-same package list as `install.sh`'s apt fallback) — keep the two package
-lists in sync if either changes.
+Docker: `docker build -t imapsync-web .` / `docker compose up -d` (or
+`sudo ./install-docker.sh`, which installs Docker itself first if it's
+missing, then does the same `docker compose up -d`). The Dockerfile builds
+imapsync from source in a separate stage (Ubuntu 24.04, same package list as
+`install.sh`'s apt fallback) — keep the two package lists in sync if either
+changes.
 
 ## Architecture
 

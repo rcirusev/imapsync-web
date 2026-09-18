@@ -78,6 +78,21 @@ Then open <http://localhost:8000>. History, per-job logs, and the
 delta-sync secret key all persist in the named `imapsync_data` volume
 across restarts and upgrades (`git pull && docker compose up -d --build`).
 
+Don't have Docker on this machine yet? `docker compose up -d` will just
+fail with "Command 'docker' not found". Run this instead of the last line
+above:
+
+```bash
+sudo ./install-docker.sh
+```
+
+It checks whether Docker (Engine + the `docker compose` plugin) is already
+installed; if not, installs it via Docker's own official install script
+(covers Debian/Ubuntu and RHEL/Fedora-family distros, same as `install.sh`'s
+supported list), then runs `docker compose up -d` for you. Safe to re-run —
+if Docker's already there it skips straight to bringing the stack up, so
+it also works as the update command later.
+
 Plain `docker`, no compose:
 
 ```bash
