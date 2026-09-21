@@ -614,6 +614,27 @@ otherwise. To turn auth on for an already-installed instance, re-run
 `/etc/systemd/system/imapsync-web.service` directly and
 `systemctl daemon-reload && systemctl restart imapsync-web`.
 
+**Using Docker instead?** The prompt above is specific to `install.sh`'s
+systemd install — for Docker, set the same two variables in `.env`
+(`cp .env.example .env` first if you don't have one yet) and bring the
+stack up:
+
+```
+IMAPSYNC_WEB_USERNAME=admin
+IMAPSYNC_WEB_PASSWORD=some-long-random-value
+```
+
+```
+docker compose up -d
+```
+
+Already running? Edit `.env` the same way, then `docker compose up -d`
+again — compose recreates the container with the new environment, no
+separate restart step needed. Passing them straight on the command line
+instead works too (same single-quoting caveat as `install.sh` above):
+`IMAPSYNC_WEB_USERNAME=admin IMAPSYNC_WEB_PASSWORD='some-long-random-value' docker compose up -d`,
+or as `-e` flags on plain `docker run` (see the Docker section above).
+
 Both variables must be set together — setting only one leaves the app open
 (with a warning logged at install time) rather than locking you out with a
 half-configured password. This is plain Basic Auth: it stops casual/opportunistic
