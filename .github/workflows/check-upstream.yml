@@ -28,8 +28,13 @@ jobs:
 
       - name: Get latest imapsync/imapsync commit SHA
         id: upstream
+        # Authenticated, because anonymous api.github.com calls are
+        # rate-limited per runner IP (shared with other jobs) and 403 at random.
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           SHA=$(curl -fsSL -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
             https://api.github.com/repos/imapsync/imapsync/commits/master \
             | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])")
           echo "Latest upstream commit: $SHA"
