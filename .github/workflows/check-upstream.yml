@@ -7,8 +7,10 @@
 #
 # When a new upstream commit is found: IMAPSYNC_UPSTREAM_SHA.txt is updated
 # and committed (a small audit trail of "when did we pick up which upstream
-# commit"), and that push to main is what triggers docker-publish.yml to
-# rebuild + republish ghcr.io/rcirusev/imapsync-web:latest with the update.
+# commit"), then docker-publish.yml is dispatched explicitly to rebuild +
+# republish ghcr.io/rcirusev/imapsync-web:latest with the update. The push
+# alone can't do it: GitHub never starts workflows from a push made with
+# the built-in GITHUB_TOKEN, but it does honor a workflow_dispatch from it.
 name: Check upstream imapsync for updates
 
 on:
@@ -18,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  actions: write   # to dispatch docker-publish.yml
 
 jobs:
   check:
@@ -61,5 +64,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add IMAPSYNC_UPSTREAM_SHA.txt
           git commit -m "Bump upstream imapsync to ${{ steps.upstream.outputs.sha }}" \
-            -m "Triggers docker-publish.yml to rebuild with the latest imapsync/imapsync master."
+            -m "Followed by a dispatched docker-publish.yml rebuild with the latest imapsync/imapsync master."
           git push
+
+      - name: Rebuild the Docker image
+        if: steps.compare.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docker-publish.yml --ref main --repo "$GITHUB_REPOSITORY"
