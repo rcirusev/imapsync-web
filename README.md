@@ -249,7 +249,9 @@ in this app:
 - **Cyrus IMAP**: proxy authentication (`imapd.conf`'s `admins`/`proxy` config).
 - **Microsoft 365 / Exchange**: a different mechanism entirely (Application
   Impersonation or app-only OAuth2, not IMAP master-user) — not covered by
-  this feature; see the OAuth2 note under Security notes.
+  this feature; see the OAuth2 note under Security notes. **Exception:**
+  on-premises Exchange supports a simpler route that *does* work through
+  this app's plain username/password fields — see below.
 
 Under the hood this maps straight onto imapsync's own `--authuser1` /
 `--authuser2` flags, and the same idea for the Bulk (CSV) tab: the
@@ -276,6 +278,35 @@ explicitly. Setting `authmech1` (or `authmech2`) to `PLAIN` fixes that —
 see `zmprov grantRight domain <domain> usr <admin> adminLoginAs` and
 `zmprov checkRight account <target> <admin> adminLoginAs` (expect
 `ALLOWED`) on the Zimbra side if the login still fails after setting it.
+
+**On-premises Exchange — delegated access via Full Access, no
+impersonation setup needed.** If you have (or grant yourself) classic
+Exchange **Full Access** permission on the target mailbox, imapsync can log
+in as that mailbox without the real owner's password and without touching
+Application Impersonation/OAuth2 at all — on the Exchange side:
+
+```powershell
+Add-MailboxPermission -Identity "target.user@domain.com" -User "DOMAIN\admin_user" -AccessRights FullAccess -InheritanceType All
+```
+
+(make sure IMAP4 is enabled on the server and for the admin account —
+`Get-CASMailbox admin_user | Select ImapEnabled`, `Set-CASMailbox
+admin_user -ImapEnabled $true` if not). Then, in **the plain Username
+field** (`user1`/`user2` — this does *not* go through the "Use a
+master/admin account" toggle or `authuser1`/`authuser2` at all), enter:
+
+```
+DOMAIN\admin_user\target.mailbox
+```
+
+with the **admin account's own password** (not the target mailbox's) in
+the regular Password field. Confirmed working this way against an
+on-premises Exchange destination with `authuser2`/`authmech2` left blank —
+Exchange reads the backslash-separated username itself and resolves the
+delegated mailbox from the Full Access grant, so imapsync needs nothing
+extra. This is specific to on-premises Exchange's classic IMAP4 service;
+Microsoft 365 (Exchange Online) is a separate case — see the OAuth2 note
+under Security notes.
 
 The admin credentials get exactly the same handling as any other password
 in this app: sent once to start the migration (or the connection test),
